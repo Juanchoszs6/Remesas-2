@@ -161,9 +161,9 @@ export function AnalyticsChart({
     layout: {
       padding: {
         top: 30,
-        right: 20,
-        bottom: 40,
-        left: 20
+        right: 10,
+        bottom: 40,  // Adjusted bottom padding
+        left: 10
       }
     },
     plugins: {
@@ -203,7 +203,7 @@ export function AnalyticsChart({
           font: { size: 12, weight: 500 },
           maxRotation: 0,
           autoSkip: false,
-          padding: 5,
+          padding: 10,
           callback: (value: number | string, index: number, values) => {
             // Get the full month name from the chart's labels
             const monthName = chartMonths[index] || '';
@@ -254,19 +254,16 @@ export function AnalyticsChart({
         </div>
       </div>
       
-      <div className="relative h-[400px] w-full bg-white rounded-lg p-4 shadow-sm border">
+      <div className="relative h-[450px] w-full bg-white rounded-lg p-4 shadow-sm border overflow-hidden">
+        {/* Removed duplicate month labels from background */}
         <div className="absolute inset-0 flex items-end justify-center pointer-events-none">
           <div className="w-full h-full grid grid-cols-12 gap-0">
-            {MONTHS.map((month, index) => (
+            {MONTHS.map((month) => (
               <div 
-                key={month} 
-                className="h-full border-r border-gray-100 flex flex-col items-center justify-end pb-6"
+                key={month}
+                className="h-full border-r border-gray-100"
                 aria-hidden="true"
-              >
-                <span className="text-xs text-gray-400 transform -translate-y-1">
-                  {month.substring(0, 3)}
-                </span>
-              </div>
+              />
             ))}
           </div>
         </div>

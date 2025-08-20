@@ -296,12 +296,13 @@ export default function DashboardContent({ user }: DashboardContentProps) {
                 Visualización de datos por {getTimeRangeName(timeRange).toLowerCase()}
               </CardDescription>
             </CardHeader>
-            <CardContent className="p-6">
-              <div className="h-80 -mx-2">
+            <CardContent className="p-0">
+              <div className="w-full" style={{ minHeight: '500px' }}>
                 <AnalyticsChart 
                   title={`${getDocumentTypeName(documentType)} - ${getTimeRangeName(timeRange)}`}
                   timeRange={timeRange}
                   documentType={documentType}
+                  className="p-6"
                 />
               </div>
             </CardContent>
