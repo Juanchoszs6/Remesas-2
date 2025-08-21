@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import * as XLSX from 'xlsx';
 
 // Función para normalizar texto de encabezado
@@ -17,213 +17,130 @@ interface ProcessedData {
   total: number;
 }
 
-// Tipos de documentos soportados
+// Tipos de documentos soportados para Siigo
 type DocumentType = 'FC' | 'ND' | 'DS' | 'RP';
 
-// Función mejorada para detectar el tipo de documento
-const detectDocumentType = (row: any[], headers: string[]): DocumentType | null => {
-  // Convertir toda la fila a string para búsqueda
+const documentTypeNames = {
+  'FC': 'Factura de Compra',
+  'ND': 'Nota Débito',
+  'DS': 'Documento Soporte', 
+  'RP': 'Recibo de Pago'
+};
+
+// Función mejorada para detectar el tipo de documento desde los datos de Siigo
+const detectDocumentTypeFromSiigo = (row: any[], headers: string[]): DocumentType | null => {
+  // Buscar en la columna que contenga "Factura" o "comprobante" 
+  const facturaIndex = headers.findIndex(h => 
+    h && (h.includes('factura') || h.includes('comprobante') || h.includes('documento'))
+  );
+  
+  if (facturaIndex !== -1 && row[facturaIndex]) {
+    const facturaValue = String(row[facturaIndex]).toUpperCase().trim();
+    console.log('Analizando comprobante:', facturaValue);
+    
+    // Detectar por prefijo del número de factura/comprobante
+    if (facturaValue.startsWith('FC-') || facturaValue.includes('FC-')) return 'FC';
+    if (facturaValue.startsWith('ND-') || facturaValue.includes('ND-')) return 'ND';
+    if (facturaValue.startsWith('DS-') || facturaValue.includes('DS-')) return 'DS';
+    if (facturaValue.startsWith('RP-') || facturaValue.includes('RP-')) return 'RP';
+  }
+  
+  // Buscar en cualquier columna el patrón
   const rowText = row.map(cell => String(cell || '').toUpperCase().trim()).join(' ');
   
-  console.log('Detectando tipo de documento en:', rowText);
+  // Patrones específicos para Siigo
+  if (/FC-\d+/.test(rowText)) return 'FC';
+  if (/ND-\d+/.test(rowText)) return 'ND'; 
+  if (/DS-\d+/.test(rowText)) return 'DS';
+  if (/RP-\d+/.test(rowText)) return 'RP';
   
-  // Patrones de detección más específicos y flexibles
-  const patterns = {
-    'FC': [
-      /\bFACTURA\b/i,
-      /\bFC\b/,
-      /^FC/,
-      /FACTURA\s*DE?\s*COMPRA/i,
-      /FACT\b/i
-    ],
-    'ND': [
-      /\bNOTA\s*D[EÉ]BITO\b/i,
-      /\bND\b/,
-      /^ND/,
-      /NOTA\s*DEB/i
-    ],
-    'DS': [
-      /\bDOCUMENTO\s*SOPORTE\b/i,
-      /\bDS\b/,
-      /^DS/,
-      /DOC\s*SOPORTE/i
-    ],
-    'RP': [
-      /\bRECIBO\s*DE?\s*PAGO\b/i,
-      /\bRP\b/,
-      /^RP/,
-      /RECIBO\s*PAG/i
-    ]
-  };
-  
-  // Buscar patrones en orden de prioridad
-  for (const [type, typePatterns] of Object.entries(patterns)) {
-    for (const pattern of typePatterns) {
-      if (pattern.test(rowText)) {
-        console.log(`Tipo de documento detectado: ${type} con patrón: ${pattern}`);
-        return type as DocumentType;
-      }
-    }
-  }
-  
-  // Búsqueda adicional por prefijos en las primeras columnas
-  const firstThreeCells = row.slice(0, 3).map(cell => String(cell || '').toUpperCase().trim());
-  
-  for (const cell of firstThreeCells) {
-    if (cell.startsWith('FC') || cell.includes('FACTURA')) return 'FC';
-    if (cell.startsWith('ND') || cell.includes('NOTA')) return 'ND';
-    if (cell.startsWith('DS') || cell.includes('DOCUMENTO')) return 'DS';
-    if (cell.startsWith('RP') || cell.includes('RECIBO')) return 'RP';
-  }
-  
-  console.log('No se pudo detectar el tipo de documento');
+  console.log('No se pudo detectar el tipo de documento para:', rowText.substring(0, 100));
   return null;
 };
 
-// Función para parsear fechas de manera más robusta
-const parseDate = (dateValue: any): Date | null => {
+// Función para parsear fechas de Siigo (DD/MM/YYYY)
+const parseSiigoDate = (dateValue: any): Date | null => {
   if (!dateValue) return null;
   
-  console.log('Parseando fecha:', dateValue, 'Tipo:', typeof dateValue);
-  
-  let date: Date | null = null;
+  console.log('Parseando fecha Siigo:', dateValue, 'Tipo:', typeof dateValue);
   
   try {
     // Si ya es una fecha
     if (dateValue instanceof Date) {
-      date = new Date(dateValue);
+      return new Date(dateValue);
     }
+    
     // Si es un número (fecha de Excel)
-    else if (typeof dateValue === 'number') {
-      // Convertir fecha de Excel a JavaScript
-      // Excel cuenta días desde 1900-01-01, pero con error de año bisiesto
-      const excelDate = dateValue;
-      const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
-      date = jsDate;
+    if (typeof dateValue === 'number') {
+      const jsDate = new Date((dateValue - 25569) * 86400 * 1000);
+      return jsDate;
     }
-    // Si es string
-    else if (typeof dateValue === 'string') {
+    
+    // Si es string con formato DD/MM/YYYY (formato colombiano)
+    if (typeof dateValue === 'string') {
       const cleanDateStr = dateValue.trim();
       
-      // Intentar diferentes formatos
-      // Formato ISO
-      date = new Date(cleanDateStr);
+      // Formato DD/MM/YYYY o DD/MM/YY
+      const dateRegex = /(\d{1,2})\/(\d{1,2})\/(\d{2,4})/;
+      const match = cleanDateStr.match(dateRegex);
       
-      if (isNaN(date.getTime())) {
-        // Intentar formatos DD/MM/YYYY, MM/DD/YYYY, YYYY-MM-DD
-        const dateRegex = /(\d{1,4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,4})/;
-        const match = cleanDateStr.match(dateRegex);
+      if (match) {
+        let [, day, month, year] = match;
+        let yearNum = parseInt(year);
         
-        if (match) {
-          let [, part1, part2, part3] = match;
-          let day, month, year;
-          
-          // Determinar formato basado en la longitud y valores
-          if (part1.length === 4) {
-            // YYYY-MM-DD
-            year = parseInt(part1);
-            month = parseInt(part2) - 1; // JavaScript usa 0-11
-            day = parseInt(part3);
-          } else if (part3.length === 4) {
-            // DD/MM/YYYY o MM/DD/YYYY
-            const val1 = parseInt(part1);
-            const val2 = parseInt(part2);
-            year = parseInt(part3);
-            
-            // Si el primer valor es mayor que 12, es DD/MM/YYYY
-            if (val1 > 12) {
-              day = val1;
-              month = val2 - 1;
-            }
-            // Si el segundo valor es mayor que 12, es MM/DD/YYYY
-            else if (val2 > 12) {
-              month = val1 - 1;
-              day = val2;
-            }
-            // Asumir DD/MM/YYYY por defecto para Colombia
-            else {
-              day = val1;
-              month = val2 - 1;
-            }
-          }
-          
-          if (year && month !== undefined && day) {
-            // Ajustar año de 2 dígitos
-            if (year < 100) {
-              year = year < 50 ? 2000 + year : 1900 + year;
-            }
-            
-            date = new Date(year, month, day);
-          }
+        // Ajustar año de 2 dígitos
+        if (yearNum < 100) {
+          yearNum = yearNum < 50 ? 2000 + yearNum : 1900 + yearNum;
+        }
+        
+        const date = new Date(yearNum, parseInt(month) - 1, parseInt(day));
+        
+        if (!isNaN(date.getTime()) && yearNum >= 2020 && yearNum <= 2030) {
+          console.log('Fecha Siigo parseada:', date.toISOString().split('T')[0]);
+          return date;
         }
       }
     }
-    
-    // Validar que la fecha sea válida y esté en un rango razonable
-    if (date && !isNaN(date.getTime())) {
-      const year = date.getFullYear();
-      if (year >= 2000 && year <= 2030) {
-        console.log('Fecha parseada correctamente:', date.toISOString().split('T')[0]);
-        return date;
-      }
-    }
   } catch (error) {
-    console.error('Error parseando fecha:', error);
+    console.error('Error parseando fecha Siigo:', error);
   }
   
-  console.warn('No se pudo parsear la fecha:', dateValue);
   return null;
 };
 
-// Función para parsear valores monetarios
-const parseValue = (valueInput: any): number => {
+// Función para parsear valores monetarios de Siigo
+const parseSiigoValue = (valueInput: any): number => {
   if (typeof valueInput === 'number') {
-    return valueInput;
+    return Math.abs(valueInput);
   }
   
   if (typeof valueInput === 'string') {
-    // Limpiar el string: remover símbolos de moneda, espacios, etc.
+    // Formato colombiano: 1.234.567,89 o 1,234,567.89
     let cleanValue = valueInput
-      .replace(/[$€£¥₹₽]/g, '') // Símbolos de moneda
-      .replace(/[^\d,.-]/g, '') // Solo números, comas, puntos, guión
+      .replace(/[$€£¥₹₽COP]/g, '') // Símbolos de moneda
+      .replace(/\s+/g, '') // Espacios
       .trim();
     
-    // Manejar formatos con comas y puntos
-    // Si hay tanto comas como puntos, asumir que el último es decimal
-    if (cleanValue.includes(',') && cleanValue.includes('.')) {
-      const lastComma = cleanValue.lastIndexOf(',');
-      const lastDot = cleanValue.lastIndexOf('.');
-      
-      if (lastDot > lastComma) {
-        // Formato: 1,234.56
-        cleanValue = cleanValue.replace(/,/g, '');
-      } else {
-        // Formato: 1.234,56
-        cleanValue = cleanValue.replace(/\./g, '').replace(',', '.');
-      }
+    // Si termina en ,00 o tiene formato 1.234.567,89
+    if (/\d+\.\d{3},\d{2}$/.test(cleanValue) || /\d+,\d{2}$/.test(cleanValue)) {
+      // Formato colombiano: separador de miles con punto, decimal con coma
+      cleanValue = cleanValue.replace(/\./g, '').replace(',', '.');
     }
-    // Si solo hay comas, convertir a punto decimal
-    else if (cleanValue.includes(',') && !cleanValue.includes('.')) {
-      // Verificar si es separador de miles o decimal
-      const commaIndex = cleanValue.lastIndexOf(',');
-      const afterComma = cleanValue.substring(commaIndex + 1);
-      
-      // Si después de la coma hay exactamente 2 dígitos, es decimal
-      if (afterComma.length <= 2) {
-        cleanValue = cleanValue.replace(',', '.');
-      } else {
-        cleanValue = cleanValue.replace(/,/g, '');
-      }
+    // Si es formato americano: 1,234,567.89
+    else if (/\d+,\d{3}\.\d{2}$/.test(cleanValue)) {
+      cleanValue = cleanValue.replace(/,/g, '');
     }
     
     const parsed = parseFloat(cleanValue);
-    return isNaN(parsed) ? 0 : Math.abs(parsed); // Usar valor absoluto
+    return isNaN(parsed) ? 0 : Math.abs(parsed);
   }
   
   return 0;
 };
 
-export async function POST(request: Request) {
+export const dynamic = 'force-dynamic';
+
+export async function POST(request: NextRequest) {
   let processedRows = 0;
   let skippedRows = 0;
   let headers: string[] = [];
@@ -252,7 +169,7 @@ export async function POST(request: Request) {
       );
     }
 
-    console.log(`Procesando archivo: ${file.name} (${file.size} bytes)`);
+    console.log(`Procesando archivo Siigo: ${file.name} (${file.size} bytes)`);
 
     // Leer el archivo Excel
     const arrayBuffer = await file.arrayBuffer();
@@ -262,13 +179,12 @@ export async function POST(request: Request) {
       cellText: false
     });
     
-    // Obtener la primera hoja
     const firstSheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[firstSheetName];
     
-    console.log(`Procesando hoja: ${firstSheetName}`);
+    console.log(`Procesando hoja Siigo: ${firstSheetName}`);
     
-    // Convertir a JSON con opciones optimizadas
+    // Convertir a JSON
     const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { 
       header: 1, 
       defval: '',
@@ -289,80 +205,131 @@ export async function POST(request: Request) {
       );
     }
 
-    // Buscar la fila de encabezados de manera más flexible
-    const requiredHeaders = ['fecha', 'valor'];
-    const optionalHeaders = ['comprobante', 'factura', 'documento', 'tipo'];
+    // Intentar encontrar la fila de encabezados de manera más flexible
+    const possibleHeaders = [
+      'factura', 'comprobante', 'documento', 'nro', 'número',
+      'fecha', 'elaboracion', 'emision',
+      'valor', 'total', 'importe', 'monto',
+      'proveedor', 'vendedor', 'nombre',
+      'identificacion', 'nit', 'ruc', 'documento'
+    ];
     
+    // Buscar en las primeras 10 filas
     for (let i = 0; i < Math.min(10, jsonData.length); i++) {
       const row = jsonData[i] || [];
       const normalizedRow = row.map((cell: any) => normalizeHeader(String(cell || '')));
       
-      // Verificar si esta fila contiene los encabezados requeridos
-      const hasRequiredHeaders = requiredHeaders.every(required => 
-        normalizedRow.some(header => header.includes(required))
-      );
+      // Contar coincidencias con posibles encabezados
+      const matchCount = normalizedRow.filter(header => 
+        possibleHeaders.some(ph => header.includes(ph))
+      ).length;
       
-      if (hasRequiredHeaders) {
+      // Si encontramos al menos 3 coincidencias, asumimos que son los encabezados
+      if (matchCount >= 3) {
         headerRowIndex = i;
         headers = normalizedRow;
-        console.log(`Encabezados encontrados en fila ${i + 1}:`, headers);
+        console.log(`Posibles encabezados encontrados en fila ${i + 1}:`, headers);
         break;
       }
     }
     
-    if (headerRowIndex === -1) {
+    // Si no encontramos encabezados, usar la primera fila
+    if (headerRowIndex === -1 && jsonData.length > 0) {
+      console.log('No se encontraron encabezados claros, usando primera fila');
+      headerRowIndex = 0;
+      headers = (jsonData[0] || []).map((cell: any) => String(cell || '').trim());
+    }
+    
+    if (headers.length === 0) {
       return NextResponse.json(
         { 
           success: false,
-          error: 'No se encontraron encabezados válidos',
-          details: `Se requieren columnas con: ${requiredHeaders.join(', ')}`,
+          error: 'No se pudieron determinar los encabezados',
+          details: 'El archivo no contiene una estructura de datos reconocible',
           sampleData: jsonData.slice(0, 5)
         },
         { status: 400 }
       );
     }
 
-    // Encontrar índices de columnas
-    const findColumnIndex = (patterns: string[]): number => {
-      for (const pattern of patterns) {
-        const index = headers.findIndex(h => h.includes(pattern));
-        if (index !== -1) return index;
-      }
-      return -1;
+    // Función para encontrar el mejor índice de columna basado en palabras clave
+    const findBestColumnIndex = (keywords: string[]): number => {
+      const scores = headers.map(header => {
+        const headerLower = header.toLowerCase();
+        return keywords.reduce((score, keyword) => 
+          headerLower.includes(keyword) ? score + 1 : score, 0);
+      });
+      
+      const maxScore = Math.max(...scores);
+      return maxScore > 0 ? scores.indexOf(maxScore) : -1;
     };
-
-    const fechaIndex = findColumnIndex(['fecha', 'date']);
-    const valorIndex = findColumnIndex(['valor', 'monto', 'total', 'importe']);
     
-    if (fechaIndex === -1 || valorIndex === -1) {
+    // Encontrar índices de columnas de manera flexible
+    const facturaIndex = findBestColumnIndex(['factura', 'comprobante', 'documento', 'nro', 'número']);
+    const fechaIndex = findBestColumnIndex(['fecha', 'elaboracion', 'emision', 'creacion']);
+    const valorIndex = findBestColumnIndex(['valor', 'total', 'importe', 'monto', 'amount']);
+    const proveedorIndex = findBestColumnIndex(['proveedor', 'vendedor', 'nombre', 'name', 'supplier']);
+    const identificacionIndex = findBestColumnIndex(['identificacion', 'nit', 'ruc', 'documento', 'id']);
+    
+    console.log('Índices detectados:', {
+      facturaIndex,
+      fechaIndex,
+      valorIndex,
+      proveedorIndex,
+      identificacionIndex,
+      headers
+    });
+    
+    // Verificar columnas requeridas mínimas
+    const missingColumns = [];
+    if (facturaIndex === -1) missingColumns.push('Factura/Comprobante');
+    if (fechaIndex === -1) missingColumns.push('Fecha');
+    if (valorIndex === -1) missingColumns.push('Valor/Total');
+    
+    if (missingColumns.length > 0) {
       return NextResponse.json(
         { 
           success: false,
-          error: 'Columnas requeridas no encontradas',
-          details: `Se requieren columnas de fecha y valor. Encabezados: ${headers.join(', ')}`,
-          headers: headers
+          error: 'Faltan columnas requeridas',
+          details: `No se pudieron identificar las columnas para: ${missingColumns.join(', ')}`,
+          headers: headers.map((h, i) => `${i}: ${h}`),
+          sampleData: jsonData.slice(0, 5)
         },
         { status: 400 }
       );
     }
 
-    console.log(`Índices de columnas - Fecha: ${fechaIndex}, Valor: ${valorIndex}`);
-
     // Procesar filas de datos
     const dataRows = jsonData.slice(headerRowIndex + 1);
-    console.log(`Procesando ${dataRows.length} filas de datos`);
+    console.log(`Procesando ${dataRows.length} filas de datos Siigo`);
+    
+    // Contador para filas procesadas correctamente
+    let validRows = 0;
 
     for (let i = 0; i < dataRows.length; i++) {
-      const row = dataRows[i];
+      const row = dataRows[i] || [];
       
-      if (!row || row.length === 0 || row.every(cell => !cell)) {
+      // Saltar filas vacías
+      if (row.every(cell => cell === '' || cell === null || cell === undefined)) {
+        console.log(`Fila ${i + headerRowIndex + 2} vacía, omitiendo`);
         skippedRows++;
         continue;
       }
-
+      
       try {
+        // Verificar filas con datos faltantes críticos
+        if (!row[facturaIndex] || !row[fechaIndex] || !row[valorIndex]) {
+          console.log(`Fila ${i + headerRowIndex + 2} falta información crítica, omitiendo:`, {
+            factura: row[facturaIndex],
+            fecha: row[fechaIndex],
+            valor: row[valorIndex]
+          });
+          skippedRows++;
+          continue;
+        }
+
         // Detectar tipo de documento
-        const docType = detectDocumentType(row, headers);
+        const docType = detectDocumentTypeFromSiigo(row, headers);
         
         if (!docType) {
           console.log(`Fila ${i + 1}: Tipo de documento no detectado, saltando`);
@@ -371,7 +338,7 @@ export async function POST(request: Request) {
         }
 
         // Parsear fecha
-        const date = parseDate(row[fechaIndex]);
+        const date = parseSiigoDate(row[fechaIndex]);
         
         if (!date) {
           console.log(`Fila ${i + 1}: Fecha inválida, saltando`);
@@ -380,10 +347,10 @@ export async function POST(request: Request) {
         }
 
         // Parsear valor
-        const value = parseValue(row[valorIndex]);
+        const value = parseSiigoValue(row[valorIndex]);
         
         if (value <= 0) {
-          console.log(`Fila ${i + 1}: Valor inválido (${value}), saltando`);
+          console.log(`Fila ${i + 1}: Valor inválido (${row[valorIndex]}), saltando`);
           skippedRows++;
           continue;
         }
@@ -403,7 +370,9 @@ export async function POST(request: Request) {
         processedData[docType].values[month] += value;
         processedData[docType].total += value;
 
-        console.log(`Fila ${i + 1} procesada: ${docType}, ${date.toISOString().split('T')[0]}, $${value.toLocaleString()}`);
+        if (processedRows < 5) {
+          console.log(`Fila ${i + 1} procesada: ${docType}, ${date.toISOString().split('T')[0]}, $${value.toLocaleString()}`);
+        }
         processedRows++;
 
       } catch (error) {
@@ -412,15 +381,15 @@ export async function POST(request: Request) {
       }
     }
 
-    console.log(`Procesamiento completado: ${processedRows} filas procesadas, ${skippedRows} filas saltadas`);
+    console.log(`Procesamiento Siigo completado: ${processedRows} filas procesadas, ${skippedRows} filas saltadas`);
 
     // Verificar si se procesaron datos
     if (processedRows === 0) {
       return NextResponse.json(
         { 
           success: false,
-          error: 'No se procesaron datos válidos',
-          details: 'Verifique que el archivo contenga datos con el formato correcto',
+          error: 'No se procesaron datos válidos de Siigo',
+          details: 'Verifique que el archivo contenga datos con prefijos FC-, ND-, DS-, RP-',
           debug: {
             headers,
             sampleRows: dataRows.slice(0, 3)
@@ -430,38 +399,55 @@ export async function POST(request: Request) {
       );
     }
 
-    // Mostrar resumen de datos procesados
-    console.log('Resumen de datos procesados:');
+    // Mostrar resumen
+    console.log('Resumen Siigo:');
     Object.entries(processedData).forEach(([type, data]) => {
       if (data.total > 0) {
         console.log(`${type}: $${data.total.toLocaleString()} total`);
       }
     });
 
+    // Generar resumen por tipo de documento
+    const summary = Object.entries(processedData).map(([type, data]) => ({
+      type,
+      name: documentTypeNames[type as DocumentType] || type,
+      count: data.values.reduce((a, b) => a + b, 0),
+      total: data.total,
+      months: data.values.map((count, index) => ({
+        month: index + 1,
+        count,
+        total: data.values[index] * (data.total / (data.values.reduce((a, b) => a + b, 1)) || 1)
+      }))
+    }));
+
     return NextResponse.json({
       success: true,
-      data: {
-        FC: processedData.FC,
-        ND: processedData.ND,
-        DS: processedData.DS,
-        RP: processedData.RP,
-        _debug: {
-          processedRows,
-          skippedRows,
-          headerRow: headers,
-          headerRowIndex: headerRowIndex + 1
-        }
-      }
+      message: `Procesados ${processedRows} registros de un total de ${dataRows.length}`,
+      data: processedData,
+      summary,
+      stats: {
+        totalProcessed: processedRows,
+        totalSkipped: skippedRows,
+        totalRows: dataRows.length,
+        successRate: Math.round((processedRows / (processedRows + skippedRows)) * 100) || 0
+      },
+      headers: headers.map((h, i) => `${i}: ${h}`),
+      sampleData: dataRows.slice(0, 3).map(row => ({
+        factura: row[facturaIndex],
+        fecha: row[fechaIndex],
+        valor: row[valorIndex],
+        proveedor: proveedorIndex !== -1 ? row[proveedorIndex] : 'N/A',
+        identificacion: identificacionIndex !== -1 ? row[identificacionIndex] : 'N/A'
+      }))
     });
-
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
-    console.error('Error al procesar el archivo:', error);
+    console.error('Error al procesar archivo Siigo:', error);
     
     return NextResponse.json(
       { 
         success: false,
-        error: 'Error al procesar el archivo',
+        error: 'Error al procesar el archivo Siigo',
         details: errorMessage,
         processedRows,
         skippedRows

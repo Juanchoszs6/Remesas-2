@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Upload, FileSpreadsheet, Loader2, X, CheckCircle, AlertCircle } from 'lucide-react';
+import { Upload, FileSpreadsheet, Loader2, X, CheckCircle, AlertCircle, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import type { DocumentType } from './AnalyticsChart';
 
@@ -16,6 +16,7 @@ interface UploadedFileData {
   status: 'uploading' | 'success' | 'error';
   error?: string;
   data?: any;
+  debugInfo?: any;
 }
 
 const documentTypeNames: Record<DocumentType, string> = {
@@ -37,53 +38,35 @@ export function FileUpload({ onFilesUploaded }: FileUploadProps) {
   const [files, setFiles] = useState<UploadedFileData[]>([]);
   const [isUploading, setIsUploading] = useState(false);
 
-  // Función mejorada para detectar el tipo de documento desde el nombre del archivo
+  // Función mejorada para detectar tipo desde nombre de archivo Siigo
   const detectDocumentType = (filename: string): DocumentType | 'unknown' => {
     if (!filename) return 'unknown';
     
     const name = filename.toLowerCase().trim();
-    console.log('Detectando tipo para archivo:', name);
+    console.log('Detectando tipo para archivo Siigo:', name);
     
-    // Patrones más específicos primero
+    // Patrones específicos para Siigo
     const patterns = [
-      // Factura de Compra
-      { pattern: /(^|[\s\-_.])(fc|factura[s]?[\s\-_]*(de[\s\-_]*)?compra[s]?)([\s\-_.]|$)/i, type: 'FC' as DocumentType },
-      { pattern: /(^|[\s\-_.])(fact[\s\-_]*comp)([\s\-_.]|$)/i, type: 'FC' as DocumentType },
-      
-      // Nota Débito
-      { pattern: /(^|[\s\-_.])(nd|nota[s]?[\s\-_]*d[eé]bito[s]?)([\s\-_.]|$)/i, type: 'ND' as DocumentType },
-      { pattern: /(^|[\s\-_.])(nota[s]?[\s\-_]*deb)([\s\-_.]|$)/i, type: 'ND' as DocumentType },
-      
-      // Documento Soporte
-      { pattern: /(^|[\s\-_.])(ds|documento[s]?[\s\-_]*soporte[s]?)([\s\-_.]|$)/i, type: 'DS' as DocumentType },
-      { pattern: /(^|[\s\-_.])(doc[\s\-_]*sop)([\s\-_.]|$)/i, type: 'DS' as DocumentType },
-      
-      // Recibo de Pago
-      { pattern: /(^|[\s\-_.])(rp|recibo[s]?[\s\-_]*(de[\s\-_]*)?pago[s]?)([\s\-_.]|$)/i, type: 'RP' as DocumentType },
-      { pattern: /(^|[\s\-_.])(rec[\s\-_]*pag)([\s\-_.]|$)/i, type: 'RP' as DocumentType },
+      { pattern: /(^|[\s\-_.])(fc|factura[s]?[\s\-_]*compra)([\s\-_.]|$)/i, type: 'FC' as DocumentType },
+      { pattern: /(^|[\s\-_.])(nd|nota[s]?[\s\-_]*d[eé]bito)/i, type: 'ND' as DocumentType },
+      { pattern: /(^|[\s\-_.])(ds|documento[s]?[\s\-_]*soporte)/i, type: 'DS' as DocumentType },
+      { pattern: /(^|[\s\-_.])(rp|recibo[s]?[\s\-_]*pago)/i, type: 'RP' as DocumentType },
     ];
     
-    // Buscar patrones específicos
     for (const { pattern, type } of patterns) {
       if (pattern.test(name)) {
-        console.log(`Tipo ${type} detectado con patrón específico`);
+        console.log(`Tipo ${type} detectado para archivo Siigo`);
         return type;
       }
     }
     
-    // Búsqueda de palabras clave más general
-    if (/factura/i.test(name) && !/débito|credito|nota/i.test(name)) return 'FC';
-    if (/nota.*d[eé]bito/i.test(name) || /débito/i.test(name)) return 'ND';
-    if (/documento.*soporte/i.test(name) || /soporte/i.test(name)) return 'DS';
-    if (/recibo.*pago/i.test(name) || /pago/i.test(name)) return 'RP';
+    // Si no se detectó, intentar por palabras clave generales
+    if (/factura|compra/i.test(name)) return 'FC';
+    if (/nota.*d[eé]bito|débito/i.test(name)) return 'ND';
+    if (/documento.*soporte|soporte/i.test(name)) return 'DS';
+    if (/recibo.*pago|pago/i.test(name)) return 'RP';
     
-    // Búsqueda por prefijos al inicio del nombre
-    if (/^fc[\s\-_]/i.test(name)) return 'FC';
-    if (/^nd[\s\-_]/i.test(name)) return 'ND';
-    if (/^ds[\s\-_]/i.test(name)) return 'DS';
-    if (/^rp[\s\-_]/i.test(name)) return 'RP';
-    
-    console.log('Tipo de documento no detectado para:', name);
+    console.log('Tipo no detectado, será determinado por el contenido del archivo');
     return 'unknown';
   };
 
@@ -122,7 +105,7 @@ export function FileUpload({ onFilesUploaded }: FileUploadProps) {
         }
         
         // Validar tamaño
-        if (fileData.file.size > 50 * 1024 * 1024) { // 50MB
+        if (fileData.file.size > 50 * 1024 * 1024) {
           setFiles(prev => 
             prev.map(f => 
               f.file === fileData.file 
@@ -147,33 +130,51 @@ export function FileUpload({ onFilesUploaded }: FileUploadProps) {
           )
         );
         
-        // Crear toast de progreso
         const toastId = toast.loading(`Procesando ${fileData.file.name}... (${i + 1}/${filesToProcess.length})`);
         
         try {
-          // Crear FormData
           const formData = new FormData();
           formData.append('file', fileData.file);
           
-          // Llamar a la API
+          console.log('Enviando archivo Siigo a /api/analytics/process');
+          
+          // Verificar si el endpoint existe primero
           const response = await fetch('/api/analytics/process', {
             method: 'POST',
             body: formData,
           });
           
+          console.log('Respuesta del servidor:', response.status, response.statusText);
+          
+          if (!response.ok) {
+            let errorMessage = `Error del servidor: ${response.status} ${response.statusText}`;
+            
+            try {
+              const errorText = await response.text();
+              console.error('Error del servidor:', errorText);
+              
+              if (response.status === 404) {
+                errorMessage = 'Endpoint no encontrado. Verifique que /api/analytics/process/route.ts existe';
+              } else if (response.status === 500) {
+                errorMessage = 'Error interno del servidor. Verifique los logs';
+              }
+            } catch (e) {
+              console.error('No se pudo leer la respuesta de error');
+            }
+            
+            throw new Error(errorMessage);
+          }
+          
           let result;
           try {
             result = await response.json();
+            console.log('Respuesta JSON del procesamiento Siigo:', result);
           } catch (e) {
             throw new Error('Respuesta inválida del servidor');
           }
           
-          if (!response.ok) {
-            throw new Error(result.error || `Error HTTP ${response.status}`);
-          }
-          
           if (!result.success) {
-            throw new Error(result.error || result.details || 'Error procesando archivo');
+            throw new Error(result.error || result.details || 'Error procesando archivo Siigo');
           }
           
           // Determinar tipo de documento
@@ -190,13 +191,26 @@ export function FileUpload({ onFilesUploaded }: FileUploadProps) {
               
               if (dataTypes.length === 1) {
                 detectedType = dataTypes[0] as DocumentType;
-                console.log(`Tipo detectado desde datos: ${detectedType}`);
+                console.log(`Tipo detectado desde datos Siigo: ${detectedType}`);
+              } else if (dataTypes.length > 1) {
+                // Si hay múltiples tipos, tomar el que tenga mayor total
+                let maxType = dataTypes[0];
+                let maxTotal = result.data[maxType]?.total || 0;
+                
+                for (const type of dataTypes) {
+                  if ((result.data[type]?.total || 0) > maxTotal) {
+                    maxTotal = result.data[type].total;
+                    maxType = type;
+                  }
+                }
+                detectedType = maxType as DocumentType;
+                console.log(`Tipo con mayor total detectado: ${detectedType}`);
               }
             }
           }
           
           if (detectedType === 'unknown') {
-            throw new Error('No se pudo determinar el tipo de documento. Incluya FC, ND, DS o RP en el nombre del archivo.');
+            throw new Error('No se pudo determinar el tipo de documento Siigo. Verifique que contenga FC-, ND-, DS- o RP-');
           }
           
           // Actualizar archivo como exitoso
@@ -207,7 +221,8 @@ export function FileUpload({ onFilesUploaded }: FileUploadProps) {
                     ...f, 
                     status: 'success' as const,
                     type: detectedType as DocumentType,
-                    data: result.data
+                    data: result.data,
+                    debugInfo: result.data._debug
                 } 
                 : f
             )
@@ -220,10 +235,10 @@ export function FileUpload({ onFilesUploaded }: FileUploadProps) {
             data: result.data
           });
           
-          toast.success(`${fileData.file.name} procesado como ${documentTypeNames[detectedType]}`, { id: toastId });
+          toast.success(`${fileData.file.name} procesado como ${documentTypeNames[detectedType]} (${result.data._debug?.processedRows || 0} filas)`, { id: toastId });
           
         } catch (error) {
-          console.error('Error procesando archivo:', error);
+          console.error('Error procesando archivo Siigo:', error);
           const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
           
           setFiles(prev => 
@@ -243,14 +258,14 @@ export function FileUpload({ onFilesUploaded }: FileUploadProps) {
         
         // Pausa entre archivos
         if (i < filesToProcess.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 500));
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
       
       // Notificar archivos procesados exitosamente
       if (results.length > 0 && onFilesUploaded) {
         onFilesUploaded(results);
-        toast.success(`${results.length} archivo(s) procesado(s) correctamente`);
+        toast.success(`${results.length} archivo(s) de Siigo procesado(s) correctamente`);
       }
       
     } finally {
@@ -296,15 +311,13 @@ export function FileUpload({ onFilesUploaded }: FileUploadProps) {
           status: 'uploading' as const,
         }));
 
-        // Agregar archivos a la lista
         setFiles(prev => [...prev, ...newFiles]);
         
-        // Procesar archivos
         try {
           await processFiles(newFiles);
         } catch (error) {
-          console.error('Error processing files:', error);
-          toast.error('Error procesando archivos. Revise los detalles de cada archivo.');
+          console.error('Error procesando archivos Siigo:', error);
+          toast.error('Error procesando archivos de Siigo. Revise los detalles.');
         }
       }
     },
@@ -314,12 +327,8 @@ export function FileUpload({ onFilesUploaded }: FileUploadProps) {
       'text/csv': ['.csv']
     },
     multiple: true,
-    maxFiles: 50,
-    maxSize: 50 * 1024 * 1024, // 50MB
-    onError: (err) => {
-      console.error('Error en dropzone:', err);
-      toast.error(`Error al cargar archivos: ${err.message}`);
-    },
+    maxFiles: 20,
+    maxSize: 50 * 1024 * 1024,
     disabled: isUploading
   });
 
@@ -376,8 +385,8 @@ export function FileUpload({ onFilesUploaded }: FileUploadProps) {
           <div>
             <p className="text-lg font-medium text-gray-900">
               {isDragActive
-                ? 'Suelta los archivos aquí...'
-                : 'Arrastra archivos Excel o haz clic para seleccionar'}
+                ? 'Suelta los archivos de Siigo aquí...'
+                : 'Arrastra archivos Excel de Siigo o haz clic para seleccionar'}
             </p>
             <p className="text-sm text-gray-500 mt-1">
               Soporta archivos .xlsx, .xls y .csv (hasta 50MB cada uno)
@@ -386,7 +395,7 @@ export function FileUpload({ onFilesUploaded }: FileUploadProps) {
           {isUploading && (
             <div className="flex items-center space-x-2 text-blue-600">
               <Loader2 className="h-4 w-4 animate-spin" />
-              <span className="text-sm font-medium">Procesando archivos...</span>
+              <span className="text-sm font-medium">Procesando archivos de Siigo...</span>
             </div>
           )}
         </div>
@@ -397,7 +406,7 @@ export function FileUpload({ onFilesUploaded }: FileUploadProps) {
         <div className="bg-white rounded-lg border border-gray-200 p-4">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-medium text-gray-900">
-              Archivos ({files.length})
+              Archivos de Siigo ({files.length})
             </h3>
             <div className="flex items-center space-x-4">
               {successCount > 0 && (
@@ -443,13 +452,31 @@ export function FileUpload({ onFilesUploaded }: FileUploadProps) {
                     <p className="text-sm font-medium text-gray-900 truncate">
                       {fileData.file.name}
                     </p>
-                    <p className="text-xs text-gray-500">
-                      {getDocumentTypeName(fileData.type)} • {(fileData.file.size / 1024 / 1024).toFixed(2)} MB
-                    </p>
+                    <div className="flex items-center space-x-2 text-xs text-gray-500">
+                      <span>{getDocumentTypeName(fileData.type)}</span>
+                      <span>•</span>
+                      <span>{(fileData.file.size / 1024 / 1024).toFixed(2)} MB</span>
+                      {fileData.debugInfo?.processedRows && (
+                        <>
+                          <span>•</span>
+                          <span>{fileData.debugInfo.processedRows} filas procesadas</span>
+                        </>
+                      )}
+                    </div>
                     {fileData.error && (
                       <p className="text-xs text-red-600 mt-1 truncate" title={fileData.error}>
                         {fileData.error}
                       </p>
+                    )}
+                    {fileData.status === 'success' && fileData.data && (
+                      <div className="text-xs text-green-600 mt-1">
+                        {Object.entries(fileData.data).map(([type, data]: [string, any]) => {
+                          if (type !== '_debug' && data?.total > 0) {
+                            return `${type}: ${data.total.toLocaleString()}`;
+                          }
+                          return null;
+                        }).filter(Boolean).join(', ')}
+                      </div>
                     )}
                   </div>
                 </div>
@@ -472,10 +499,11 @@ export function FileUpload({ onFilesUploaded }: FileUploadProps) {
                     {fileData.status === 'error' && (
                       <button
                         onClick={() => retryFile(fileData)}
-                        className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 rounded hover:bg-blue-50"
+                        className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 rounded hover:bg-blue-50 flex items-center space-x-1"
                         disabled={isUploading}
                       >
-                        Reintentar
+                        <RefreshCw className="h-3 w-3" />
+                        <span>Reintentar</span>
                       </button>
                     )}
                     <button
@@ -497,18 +525,31 @@ export function FileUpload({ onFilesUploaded }: FileUploadProps) {
         </div>
       )}
 
-      {/* Instrucciones */}
+      {/* Instrucciones específicas para Siigo */}
       {files.length === 0 && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
           <h4 className="text-sm font-medium text-blue-800 mb-2">
-            Consejos para mejores resultados:
+            Instrucciones para archivos de Siigo:
           </h4>
           <ul className="text-sm text-blue-700 space-y-1 list-disc list-inside">
-            <li>Nombra tus archivos con prefijos: FC (Facturas), ND (Notas Débito), DS (Documentos Soporte), RP (Recibos Pago)</li>
-            <li>Asegúrate de que tus archivos tengan columnas de "Fecha" y "Valor"</li>
-            <li>Los archivos pueden contener múltiples tipos de documentos</li>
-            <li>Formatos soportados: Excel (.xlsx, .xls) y CSV</li>
+            <li>Los archivos deben contener las columnas: "Factura proveedor", "Fecha elaboración", "Valor"</li>
+            <li>Los comprobantes deben tener prefijos: FC- (Facturas), ND- (Notas Débito), DS- (Documentos Soporte), RP- (Recibos Pago)</li>
+            <li>Las fechas deben estar en formato DD/MM/YYYY (formato colombiano)</li>
+            <li>Los valores pueden estar en formato 1.234.567,89 o 1,234,567.89</li>
+            <li>Se procesarán automáticamente por mes y tipo de documento</li>
           </ul>
+        </div>
+      )}
+
+      {/* Información de debug para desarrolladores */}
+      {process.env.NODE_ENV === 'development' && files.some(f => f.debugInfo) && (
+        <div className="bg-gray-50 border rounded-lg p-4">
+          <h4 className="text-sm font-medium text-gray-800 mb-2">Información de Debug:</h4>
+          {files.filter(f => f.debugInfo).map((file, index) => (
+            <div key={index} className="text-xs text-gray-600 mb-2">
+              <strong>{file.file.name}:</strong> {file.debugInfo.processedRows} procesadas, {file.debugInfo.skippedRows} saltadas
+            </div>
+          ))}
         </div>
       )}
     </div>
