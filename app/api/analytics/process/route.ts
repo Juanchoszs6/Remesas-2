@@ -710,10 +710,31 @@ const detectDocumentTypeAdvanced = (filename: string, sampleData?: any[][]): Doc
 
   // Primero verificar si hay contenido de muestra para analizar
   if (sampleData && sampleData.length > 0) {
-    // Buscar 'COMPRAS' o 'GASTOS' en el contenido del archivo
+    // Verificar la celda A8 (fila 7, columna 0) que contiene el tipo de documento
+    if (sampleData.length > 7 && sampleData[7] && sampleData[7][0]) {
+      const cellA8 = String(sampleData[7][0]).toUpperCase().trim();
+      console.log(`[v0] 🔍 Analizando celda A8: ${cellA8}`);
+      
+      // Mapeo de valores de la celda A8 a tipos de documento
+      if (cellA8.includes('COMPRA/GASTO') || cellA8.includes('COMPRA') || cellA8.includes('GASTO')) {
+        console.log('[v0] 📄 Tipo de documento detectado por celda A8: FC (Compras/Gastos)');
+        return 'FC';
+      } else if (cellA8.includes('NOTA DÉBITO') || cellA8.includes('NOTA DEBITO') || cellA8.includes('NOTA DÉBITO') || cellA8.includes('NOTA_DEBITO')) {
+        console.log('[v0] 📄 Tipo de documento detectado por celda A8: ND (Nota Débito)');
+        return 'ND';
+      } else if (cellA8.includes('DOCUMENTO SOPORTE') || cellA8.includes('DOCUMENTO_SOPORTE') || cellA8.includes('DOCUMENTOS SOPORTE')) {
+        console.log('[v0] 📄 Tipo de documento detectado por celda A8: DS (Documento Soporte)');
+        return 'DS';
+      } else if (cellA8.includes('RECIBO DE PAGO') || cellA8.includes('PAGOS')) {
+        console.log('[v0] 📄 Tipo de documento detectado por celda A8: RP (Recibo de Pago)');
+        return 'RP';
+      }
+    }
+    
+    // Si no se pudo determinar por la celda A8, intentar con búsqueda general
     const contentString = sampleData.flat().join(' ').toUpperCase();
     if (contentString.includes('COMPRAS') || contentString.includes('GASTOS')) {
-      console.log('[v0] 📄 Tipo de documento detectado por contenido: FC (Compras/Gastos)');
+      console.log('[v0] 📄 Tipo de documento detectado por contenido general: FC (Compras/Gastos)');
       return 'FC';
     }
   }
