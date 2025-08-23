@@ -495,17 +495,47 @@ const detectDataStructureIntelligent = (jsonData: any[][]): DataStructureCandida
   const candidates: DataStructureCandidate[] = []
   const maxRowsToScan = Math.min(PROCESSING_CONFIG.MAX_ROWS_TO_SCAN, jsonData.length)
 
-  // Palabras clave para identificar columnas
-  const valueKeywords = ["valor", "total", "importe", "monto", "precio", "amount", "value"]
-  const dateKeywords = ["fecha", "elaboracion", "emision", "date", "created", "timestamp"]
-  const comprobanteKeywords = ["comprobante", "factura", "documento", "numero", "nro", "invoice", "document"]
-  const proveedorKeywords = ["proveedor", "cliente", "nombre", "empresa", "supplier", "vendor"]
+  const valueKeywords = [
+    "valor",
+    "total",
+    "importe",
+    "monto",
+    "precio",
+    "amount",
+    "value",
+    "subtotal",
+    "neto",
+    "bruto",
+    "base",
+  ]
+  const dateKeywords = ["fecha", "elaboracion", "emision", "date", "created", "timestamp", "vencimiento", "expedicion"]
+  const comprobanteKeywords = [
+    "comprobante",
+    "factura",
+    "documento",
+    "numero",
+    "nro",
+    "invoice",
+    "document",
+    "consecutivo",
+    "folio",
+  ]
+  const proveedorKeywords = [
+    "proveedor",
+    "cliente",
+    "nombre",
+    "empresa",
+    "supplier",
+    "vendor",
+    "tercero",
+    "nit",
+    "razon",
+  ]
 
-  // Buscar candidatos de encabezado en las primeras 20 filas
-  for (let headerRowIndex = 0; headerRowIndex < Math.min(20, maxRowsToScan); headerRowIndex++) {
+  for (let headerRowIndex = 0; headerRowIndex < Math.min(30, maxRowsToScan); headerRowIndex++) {
     const headerRow = jsonData[headerRowIndex] || []
 
-    if (headerRow.length < 3) continue // Muy pocas columnas para ser útil
+    if (headerRow.length < 2) continue
 
     const headerTexts = headerRow.map((cell) =>
       String(cell || "")
@@ -526,35 +556,37 @@ const detectDataStructureIntelligent = (jsonData: any[][]): DataStructureCandida
       // Buscar columna de valor
       if (valueKeywords.some((keyword) => text.includes(keyword))) {
         headerScore += 4
-        valueColumn = colIndex
+        if (valueColumn === -1) valueColumn = colIndex
       }
 
       // Buscar columna de fecha
       if (dateKeywords.some((keyword) => text.includes(keyword))) {
         headerScore += 3
-        dateColumn = colIndex
+        if (dateColumn === -1) dateColumn = colIndex
       }
 
       // Buscar columna de comprobante
       if (comprobanteKeywords.some((keyword) => text.includes(keyword))) {
         headerScore += 3
-        comprobanteColumn = colIndex
+        if (comprobanteColumn === -1) comprobanteColumn = colIndex
       }
 
       // Buscar columna de proveedor
       if (proveedorKeywords.some((keyword) => text.includes(keyword))) {
         headerScore += 2
-        proveedorColumn = colIndex
+        if (proveedorColumn === -1) proveedorColumn = colIndex
       }
 
-      // Bonus por tener texto descriptivo
-      if (text.length > 3 && text.length < 30) {
+      if (text.length > 2 && text.length < 50 && text.match(/[a-z]/)) {
         headerScore += 1
+      }
+
+      if (text.includes("siigo") || text.includes("contabilidad") || text.includes("registro")) {
+        headerScore += 2
       }
     })
 
-    // Si parece un encabezado prometedor, buscar datos debajo
-    if (headerScore >= 5 && valueColumn >= 0) {
+    if (headerScore >= 3) {
       console.log(`[v0] Candidato de encabezado encontrado en fila ${headerRowIndex + 1} (score: ${headerScore})`)
 
       let dataStartRow = -1
@@ -564,40 +596,79 @@ const detectDataStructureIntelligent = (jsonData: any[][]): DataStructureCandida
       let averageRowLength = 0
       let rowLengthSum = 0
 
-      // Buscar filas de datos después del encabezado
       for (let dataRowIndex = headerRowIndex + 1; dataRowIndex < maxRowsToScan; dataRowIndex++) {
         const dataRow = jsonData[dataRowIndex] || []
         totalRowsScanned++
         rowLengthSum += dataRow.length
 
-        // Verificar si la fila tiene datos válidos
-        const hasValidValue = valueColumn < dataRow.length && dataRow[valueColumn]
-        const valueParseResult = hasValidValue ? parseColombianCurrencyRobust(dataRow[valueColumn]) : null
+        let hasValidData = false
 
-        if (valueParseResult && valueParseResult.value > 0 && valueParseResult.confidence > 0.3) {
+        // Estrategia 1: Verificar columna de valor si existe
+        if (valueColumn >= 0 && valueColumn < dataRow.length && dataRow[valueColumn]) {
+          const valueParseResult = parseColombianCurrencyRobust(dataRow[valueColumn])
+          if (valueParseResult && valueParseResult.value > 0 && valueParseResult.confidence > 0.2) {
+            hasValidData = true
+          }
+        }
+
+        // Estrategia 2: Verificar si hay al menos 2 celdas con contenido significativo
+        if (!hasValidData) {
+          const nonEmptyCells = dataRow.filter(
+            (cell) => cell && String(cell).trim() !== "" && String(cell).trim().length > 1,
+          ).length
+
+          if (nonEmptyCells >= 2) {
+            // Verificar si alguna celda parece un valor monetario
+            const hasMonetaryValue = dataRow.some((cell) => {
+              const parsed = parseColombianCurrencyRobust(cell)
+              return parsed && parsed.value > 0
+            })
+
+            if (hasMonetaryValue) {
+              hasValidData = true
+            }
+          }
+        }
+
+        // Estrategia 3: Verificar patrones de fecha o números
+        if (!hasValidData) {
+          const hasDateOrNumber = dataRow.some((cell) => {
+            const cellStr = String(cell || "").trim()
+            return (
+              cellStr.match(/\d{1,2}\/\d{1,2}\/\d{4}/) || // Fecha
+              cellStr.match(/^\d+$/) || // Número entero
+              cellStr.match(/^\d+[.,]\d+$/)
+            ) // Número decimal
+          })
+
+          if (hasDateOrNumber && dataRow.filter((cell) => cell && String(cell).trim() !== "").length >= 2) {
+            hasValidData = true
+          }
+        }
+
+        if (hasValidData) {
           if (dataStartRow === -1) {
             dataStartRow = dataRowIndex
           }
-          dataEndRow = dataRowIndex + 1 // Hacer exclusivo
+          dataEndRow = dataRowIndex + 1
           validDataRows++
-        } else if (validDataRows > 0 && dataRow.every((cell) => !cell || String(cell).trim() === "")) {
-          // Fila completamente vacía después de encontrar datos - posible fin
-          break
+        } else if (validDataRows > 0) {
+          const emptyRowsAfterData = dataRowIndex - (dataEndRow - 1)
+          if (emptyRowsAfterData > 5 && dataRow.every((cell) => !cell || String(cell).trim() === "")) {
+            break
+          }
         }
       }
 
       averageRowLength = totalRowsScanned > 0 ? rowLengthSum / totalRowsScanned : 0
 
-      // Calcular confianza basada en múltiples factores
       const dataRatio = totalRowsScanned > 0 ? validDataRows / totalRowsScanned : 0
-      const columnUtilization =
-        headerRow.length > 0
-          ? (valueColumn >= 0 ? 1 : 0) + (dateColumn >= 0 ? 1 : 0) + (comprobanteColumn >= 0 ? 1 : 0)
-          : 0
+      const columnUtilization = Math.min(1, headerRow.length / 5) // Normalizar por número de columnas
+      const dataVolumeScore = Math.min(1, validDataRows / 50) // Bonus por volumen de datos
 
       const confidence = Math.min(
         1.0,
-        (headerScore / 15) * 0.4 + dataRatio * 0.3 + (validDataRows / 100) * 0.2 + (columnUtilization / 3) * 0.1,
+        (headerScore / 20) * 0.3 + dataRatio * 0.3 + dataVolumeScore * 0.2 + columnUtilization * 0.2,
       )
 
       if (validDataRows > 0) {
@@ -1027,37 +1098,167 @@ async function processIndividualFileAdvanced(file: File, fileNumber: number): Pr
     }
 
     const range = XLSX.utils.decode_range(worksheet["!ref"] || "A1")
-    console.log(`[v0] 📋 Hoja: ${firstSheetName}, Rango: ${XLSX.utils.encode_range(range)}`)
+    console.log(`[v0] 📋 Hoja: ${firstSheetName}, Rango inicial: ${XLSX.utils.encode_range(range)}`)
 
-    // Convertir a datos JSON con manejo robusto
-    for (let R = range.s.r; R <= range.e.r; ++R) {
-      const row: any[] = []
-      for (let C = range.s.c; C <= range.e.c; ++C) {
-        const cellAddress = { r: R, c: C }
-        const cellRef = XLSX.utils.encode_cell(cellAddress)
-        const cell = worksheet[cellRef]
+    // Intentar múltiples métodos de extracción de datos
+    const extractionMethods = [
+      // Método 1: Usar XLSX.utils.sheet_to_json con header como array
+      () => {
+        console.log(`[v0] 🔄 Método 1: sheet_to_json con header array`)
+        const rawData = XLSX.utils.sheet_to_json(worksheet, {
+          header: 1,
+          defval: "",
+          raw: false,
+          dateNF: "yyyy-mm-dd",
+        }) as any[][]
 
-        // Extraer valor de celda con múltiples fallbacks
-        let cellValue = ""
-        if (cell) {
-          cellValue = cell.w || cell.v || cell.t || ""
+        if (rawData.length > 0 && rawData[0].length > 1) {
+          jsonData.push(...rawData)
+          console.log(`[v0] ✅ Método 1 exitoso: ${rawData.length} filas, ${rawData[0].length} columnas`)
+          return true
+        }
+        return false
+      },
+
+      // Método 2: Lectura manual celda por celda con rango expandido
+      () => {
+        console.log(`[v0] 🔄 Método 2: Lectura manual con rango expandido`)
+
+        // Expandir el rango para asegurar que capturamos todas las columnas
+        const expandedRange = {
+          s: { r: 0, c: 0 },
+          e: { r: Math.max(range.e.r, 500), c: Math.max(range.e.c, 20) },
         }
 
-        row.push(cellValue)
+        let maxCol = 0
+        let maxRow = 0
+
+        // Primero, encontrar el rango real de datos
+        for (let R = 0; R <= expandedRange.e.r; R++) {
+          let hasDataInRow = false
+          for (let C = 0; C <= expandedRange.e.c; C++) {
+            const cellAddress = { r: R, c: C }
+            const cellRef = XLSX.utils.encode_cell(cellAddress)
+            const cell = worksheet[cellRef]
+
+            if (cell && cell.v !== undefined && cell.v !== null && String(cell.v).trim() !== "") {
+              hasDataInRow = true
+              maxCol = Math.max(maxCol, C)
+              maxRow = Math.max(maxRow, R)
+            }
+          }
+
+          // Si no hay datos en 10 filas consecutivas después de encontrar datos, parar
+          if (!hasDataInRow && maxRow > 0 && R > maxRow + 10) {
+            break
+          }
+        }
+
+        console.log(`[v0] 📊 Rango real detectado: ${maxRow + 1} filas, ${maxCol + 1} columnas`)
+
+        if (maxCol > 0) {
+          // Extraer datos con el rango real
+          for (let R = 0; R <= maxRow; R++) {
+            const row: any[] = []
+            for (let C = 0; C <= maxCol; C++) {
+              const cellAddress = { r: R, c: C }
+              const cellRef = XLSX.utils.encode_cell(cellAddress)
+              const cell = worksheet[cellRef]
+
+              let cellValue = ""
+              if (cell) {
+                if (cell.w) {
+                  cellValue = cell.w
+                } else if (cell.v !== undefined && cell.v !== null) {
+                  cellValue = String(cell.v)
+                } else if (cell.t) {
+                  cellValue = cell.t
+                }
+              }
+
+              row.push(cellValue)
+            }
+            jsonData.push(row)
+          }
+
+          console.log(`[v0] ✅ Método 2 exitoso: ${jsonData.length} filas, ${jsonData[0]?.length || 0} columnas`)
+          return true
+        }
+        return false
+      },
+
+      // Método 3: Usar sheet_to_json sin header y luego convertir
+      () => {
+        console.log(`[v0] 🔄 Método 3: sheet_to_json sin header`)
+        try {
+          const rawData = XLSX.utils.sheet_to_json(worksheet, {
+            defval: "",
+            raw: false,
+          }) as Record<string, any>[]
+
+          if (rawData.length > 0) {
+            // Convertir objetos a arrays
+            const keys = Object.keys(rawData[0])
+            if (keys.length > 1) {
+              // Agregar fila de encabezados
+              jsonData.push(keys)
+
+              // Agregar datos
+              rawData.forEach((row) => {
+                const rowArray = keys.map((key) => row[key] || "")
+                jsonData.push(rowArray)
+              })
+
+              console.log(`[v0] ✅ Método 3 exitoso: ${jsonData.length} filas, ${keys.length} columnas`)
+              return true
+            }
+          }
+        } catch (error) {
+          console.log(`[v0] ❌ Método 3 falló:`, error)
+        }
+        return false
+      },
+    ]
+
+    // Intentar cada método hasta que uno funcione
+    let dataExtractionSuccess = false
+    let extractionAttempts = 0
+
+    for (const method of extractionMethods) {
+      extractionAttempts++
+      try {
+        if (method()) {
+          dataExtractionSuccess = true
+          break
+        }
+      } catch (error) {
+        console.log(`[v0] ❌ Método ${extractionAttempts} falló:`, error instanceof Error ? error.message : error)
       }
-      jsonData.push(row)
+
+      // Limpiar jsonData para el siguiente intento
+      jsonData.length = 0
     }
 
-    if (jsonData.length === 0) {
-      throw new Error("No se encontraron datos en el archivo")
+    if (!dataExtractionSuccess || jsonData.length === 0) {
+      throw new Error("No se pudo extraer datos del archivo con ningún método")
     }
 
-    console.log(`[v0] 📊 Datos cargados: ${jsonData.length} filas, ${jsonData[0]?.length || 0} columnas`)
+    console.log(`[v0] 📊 Dimensiones: ${jsonData.length} filas x ${jsonData[0]?.length || 0} columnas`)
+    console.log(`[v0] 🔢 Total de celdas a procesar: ${jsonData.length * (jsonData[0]?.length || 0)}`)
 
-    // Detectar estructura de datos
     const structureCandidates = detectDataStructureIntelligent(jsonData)
 
     if (structureCandidates.length === 0) {
+      const sampleData = jsonData.slice(0, 10).map((row, idx) => ({
+        rowIndex: idx + 1,
+        columnCount: row.length,
+        data: row.slice(0, 15), // Primeras 15 columnas para debug
+        hasNumericData: row.some((cell) => {
+          const parsed = parseColombianCurrencyRobust(cell)
+          return parsed && parsed.value > 0
+        }),
+      }))
+
       return {
         success: false,
         filename: file.name,
@@ -1067,10 +1268,12 @@ async function processIndividualFileAdvanced(file: File, fileNumber: number): Pr
         debugInfo: {
           totalRows: jsonData.length,
           totalColumns: jsonData[0]?.length || 0,
-          sampleRows: jsonData.slice(0, 5).map((row, idx) => ({
-            rowIndex: idx,
-            data: row.slice(0, 10), // Primeras 10 columnas
-          })),
+          extractionMethod: `Método ${extractionAttempts}`,
+          sampleData,
+          rangeInfo: {
+            originalRange: XLSX.utils.encode_range(range),
+            detectedDimensions: `${jsonData.length}x${jsonData[0]?.length || 0}`,
+          },
         },
       }
     }
