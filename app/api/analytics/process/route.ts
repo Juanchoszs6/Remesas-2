@@ -708,6 +708,16 @@ const detectDataStructureIntelligent = (jsonData: any[][]): DataStructureCandida
 const detectDocumentTypeAdvanced = (filename: string, sampleData?: any[][]): DocumentType => {
   const upperFilename = filename.toUpperCase()
 
+  // Primero verificar si hay contenido de muestra para analizar
+  if (sampleData && sampleData.length > 0) {
+    // Buscar 'COMPRAS' o 'GASTOS' en el contenido del archivo
+    const contentString = sampleData.flat().join(' ').toUpperCase();
+    if (contentString.includes('COMPRAS') || contentString.includes('GASTOS')) {
+      console.log('[v0] 📄 Tipo de documento detectado por contenido: FC (Compras/Gastos)');
+      return 'FC';
+    }
+  }
+
   // Detección por nombre de archivo (más confiable)
   if (upperFilename.includes("FC-") || (upperFilename.includes("FACTURA") && upperFilename.includes("COMPRA"))) {
     return "FC"
