@@ -1,13 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { LogOut, User as UserIcon, Mail, Calendar, Shield, FileText, Upload, BarChart2, LineChart, PieChart } from 'lucide-react';
+import { LogOut, User as UserIcon, Mail, Calendar, Shield, FileText, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { FileUpload } from '../analytics/FileUpload';
 import { AnalyticsChart } from '../analytics/AnalyticsChart';

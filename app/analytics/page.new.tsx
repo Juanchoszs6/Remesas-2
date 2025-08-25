@@ -46,8 +46,8 @@ export default function AnalyticsPage() {
           const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
           
           // Find header row index
-          const headerRowIndex = jsonData.findIndex((row: any) => 
-            Array.isArray(row) && row.some((cell: any) => 
+          const headerRowIndex = jsonData.findIndex((row: unknown) => 
+            Array.isArray(row) && row.some((cell: unknown) => 
               typeof cell === 'string' && cell.toLowerCase().includes('comprobante')
             )
           );
@@ -74,17 +74,18 @@ export default function AnalyticsPage() {
           };
           
           for (let i = headerRowIndex + 1; i < jsonData.length; i++) {
-            const row = jsonData[i] as any[];
+            const row = jsonData[i] as (string | number | boolean | null)[];
             if (!row || !row[comprobanteIndex]) continue;
             
-            const docType = (row[comprobanteIndex] as string).substring(0, 2).toUpperCase() as DocumentType;
+            const comprobanteValue = String(row[comprobanteIndex] || '');
+            const docType = comprobanteValue.substring(0, 2).toUpperCase() as DocumentType;
             if (!['FC', 'ND', 'DS', 'RP'].includes(docType)) continue;
             
             // Process date
             let date: Date | null = null;
             const fechaValue = row[fechaIndex];
-            if (fechaValue instanceof Date) {
-              date = fechaValue;
+            if (fechaValue && typeof fechaValue === 'object' && 'getTime' in fechaValue) {
+              date = fechaValue as unknown as Date;
             } else if (typeof fechaValue === 'number') {
               // Handle Excel date numbers
               date = new Date((fechaValue - 25569) * 86400 * 1000);
@@ -95,7 +96,9 @@ export default function AnalyticsPage() {
             if (!date || isNaN(date.getTime())) continue;
             
             const month = date.getMonth(); // 0-11
-            const value = parseFloat(row[valorIndex]) || 0;
+            const valueCell = row[valorIndex];
+            const value = typeof valueCell === 'number' ? valueCell : 
+                         typeof valueCell === 'string' ? parseFloat(valueCell) || 0 : 0;
             
             processedData[docType][month] += value;
           }
@@ -126,13 +129,13 @@ export default function AnalyticsPage() {
           
           resolve();
           
-        } catch (error) {
+        } catch (error: unknown) {
           console.error('Error processing file:', error);
           reject(error);
         }
       };
       
-      reader.onerror = (error) => {
+      reader.onerror = (error: ProgressEvent<FileReader>) => {
         console.error('Error reading file:', error);
         reject(error);
       };

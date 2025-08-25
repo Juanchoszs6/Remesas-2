@@ -29,10 +29,11 @@ export async function GET(request: Request) {
     const analytics = await obtenerAnalyticsSiigo(period);
     
     return NextResponse.json(analytics);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error en API de analytics:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
     return NextResponse.json(
-      { error: 'Error al obtener los datos analíticos', details: error.message },
+      { error: 'Error al obtener los datos analíticos', details: errorMessage },
       { status: 500 }
     );
   }

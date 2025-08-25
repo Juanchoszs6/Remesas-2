@@ -60,7 +60,7 @@ async function importarProveedores(client) {
     let actualizados = 0
     let errores = 0
 
-    for (const [index, proveedor] of data.entries()) {
+    for (const proveedor of data) {
       const codigo = proveedor.Codigo_Prov?.toString().trim()
       const nombre = proveedor.Nombre_Prov?.toString().trim()
 
@@ -119,7 +119,7 @@ async function importarProductos(client) {
     let actualizados = 0
     let errores = 0
 
-    for (const [index, producto] of data.entries()) {
+    for (const producto of data) {
       const codigo = producto.Codigo_Prod?.toString().trim()
       const nombre = producto.Nombre_Prod?.toString().trim()
       const precio = producto.Precio_Base ? Number.parseFloat(producto.Precio_Base) : 0

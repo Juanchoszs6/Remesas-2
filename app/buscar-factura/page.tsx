@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Search, Loader2, ArrowLeft } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertCircle, CheckCircle2 } from 'lucide-react';
+import { AlertCircle } from 'lucide-react';
 import { Badge } from "@/components/ui/badge";
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -115,10 +115,10 @@ export default function BuscarFacturaPage() {
       
       // Buscamos la factura por diferentes campos
       const searchTerm = invoiceId.trim().toLowerCase();
-      const foundInvoice = allInvoices.find((inv: any) => 
-        String(inv.number).toLowerCase() === searchTerm ||
-        inv.id.toLowerCase() === searchTerm ||
-        String(inv.document_number).toLowerCase() === searchTerm
+      const foundInvoice = allInvoices.find((inv: { number?: string | number; id?: string; document_number?: string | number }) => 
+        (inv.number !== undefined && String(inv.number).toLowerCase() === searchTerm) ||
+        (inv.id !== undefined && inv.id.toLowerCase() === searchTerm) ||
+        (inv.document_number !== undefined && String(inv.document_number).toLowerCase() === searchTerm)
       );
 
       if (!foundInvoice) {
@@ -126,9 +126,10 @@ export default function BuscarFacturaPage() {
       }
 
       setInvoice(foundInvoice);
-    } catch (err) {
-      console.error('Error al buscar factura:', err);
-      setError(err instanceof Error ? err.message : 'Error desconocido al buscar la factura');
+    } catch (_e) {
+      console.error('Error al buscar factura:', _e);
+      const errorMessage = _e instanceof Error ? _e.message : 'Error desconocido';
+      setError(`Error al buscar la factura: ${errorMessage}`);
     } finally {
       setIsLoading(false);
     }
@@ -137,7 +138,7 @@ export default function BuscarFacturaPage() {
   const formatDate = (dateString: string) => {
     try {
       return format(new Date(dateString), 'PPP', { locale: es });
-    } catch (e) {
+    } catch (_e: unknown) {
       return dateString;
     }
   };

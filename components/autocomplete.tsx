@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label"
 import { Card } from "@/components/ui/card"
 import { Loader2 } from "lucide-react"
 
-interface AutocompleteOption {
+export interface AutocompleteOption {
   codigo: string
   nombre: string
   precio_base?: number

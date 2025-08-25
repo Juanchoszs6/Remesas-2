@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { crearCompraSiigo } from "@/lib/siigo/purchaseApi";
-import { obtenerTokenSiigo } from "@/lib/siigo/auth";
+import { obtenerTokenSiigo, SiigoAuthError } from "@/lib/siigo/auth";
+
+interface ErrorResponse {
+  error: string;
+  details?: unknown;
+  status: number;
+}
 
 export async function POST(request: Request) {
   try {
@@ -46,19 +52,41 @@ export async function POST(request: Request) {
     console.log("Factura enviada exitosamente a Siigo:", resultado);
     
     return NextResponse.json(resultado);
-  } catch (error: any) {
-    console.error("Error al procesar la factura:", error);
+  } catch (error) {
+    console.error("Error al procesar la solicitud:", error);
     
-    // Proporcionar un mensaje de error más detallado
-    const mensajeError = error.message || "Error desconocido al procesar la factura";
-    const codigoEstado = error.status || 500;
+    if (error instanceof SiigoAuthError) {
+      return NextResponse.json(
+        { 
+          error: "Error de autenticación con Siigo",
+          details: error.message,
+          status: 401
+        } as ErrorResponse,
+        { status: 401 }
+      );
+    }
+    
+    if (error instanceof Error) {
+      const status = 'status' in error && typeof error.status === 'number' 
+        ? error.status as number 
+        : 500;
+      
+      return NextResponse.json(
+        { 
+          error: "Error al procesar la solicitud",
+          details: error.message,
+          status
+        } as ErrorResponse,
+        { status }
+      );
+    }
     
     return NextResponse.json(
       { 
-        error: "Error al procesar la factura",
-        detalles: mensajeError 
-      },
-      { status: codigoEstado }
+        error: "Error interno del servidor al procesar la solicitud",
+        status: 500
+      } as ErrorResponse,
+      { status: 500 }
     );
   }
 }

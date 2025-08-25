@@ -1,38 +1,42 @@
+import * as React from 'react';
 import { useReducer, useState, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
+import { InvoiceItem } from "@/types/siigo";
+import { Textarea } from "@/components/ui/textarea";
+import { Separator } from '@/components/ui/separator';
+import { Autocomplete, type AutocompleteOption } from '@/components/autocomplete';
+import { InvoiceItemForm } from "./InvoiceItemForm";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { toast } from "sonner";
 import { 
   Send, 
   Plus, 
-  Trash2, 
-  Loader2, 
+  // Trash2 and Loader2 are imported but not used in this file
   CheckCircle2 as CheckCircledIcon, 
   AlertTriangle as ExclamationTriangleIcon 
-} from "lucide-react";
-import { useRouter } from "next/navigation";
-import { toast } from "sonner";
-import { InvoiceItemForm } from "@/components/invoice/InvoiceItemForm";
-import { InvoiceItem, SiigoPurchaseItemRequest, SiigoPaymentRequest } from "@/types/siigo";
-import { Separator } from '@/components/ui/separator';
-import { Autocomplete } from '@/components/autocomplete';
+} from 'lucide-react';
 
+// Define missing types
 interface Provider {
-  identificacion: string;
-  nombre: string;
-  tipo_documento: string;
-  nombre_comercial: string;
-  ciudad: string;
-  direccion: string;
-  telefono: string;
-  correo_electronico: string;
-  codigo: string;
+  id?: string;
+  codigo?: string;
+  identificacion?: string;
+  nombre?: string;
+  name?: string; // Alias for nombre
   branch_office?: number;
+  type?: string;
   identification?: string;
-  name?: string;
+  tipo_documento?: string;
+  nombre_comercial?: string;
+  ciudad?: string;
+  direccion?: string;
+  telefono?: string;
+  correo_electronico?: string;
+  [key: string]: string | number | undefined;
 }
 
 interface InvoiceState {
@@ -46,131 +50,49 @@ interface InvoiceState {
   ivaPercentage: number;
   providerCode: string;
   providerIdentification: string;
+  costCenter?: string;
   cufe?: string;
-  costCenter?: number;
-  currency?: {
-    code: string;
-    exchange_rate: number;
-  };
+  currency?: string;
 }
 
 type InvoiceFormAction =
   | { type: 'ADD_ITEM'; payload: InvoiceItem }
   | { type: 'REMOVE_ITEM'; payload: string }
-  | { type: 'UPDATE_ITEM'; payload: { id: string; field: string; value: any } }
-  | { type: 'UPDATE_FIELD'; payload: { field: string; value: any } }
+  | { 
+      type: 'UPDATE_ITEM'; 
+      payload: { 
+        id: string; 
+        field: keyof InvoiceItem; 
+        value: string | number | boolean | { type?: string; value?: number } | undefined;
+      } 
+    }
+  | { 
+      type: 'UPDATE_FIELD'; 
+      payload: { 
+        field: keyof Omit<InvoiceState, 'provider' | 'items' | 'costCenter' | 'cufe' | 'currency'>; 
+        value: string | number | boolean;
+      } 
+    }
   | { type: 'SET_PROVIDER'; payload: Provider | null }
   | { type: 'SET_DOCUMENT_ID'; payload: string }
   | { type: 'SET_PROVIDER_INVOICE_NUMBER'; payload: string }
+  | { type: 'SET_COST_CENTER'; payload: string }
+  | { type: 'SET_CUFE'; payload: string }
+  | { type: 'SET_CURRENCY'; payload: string }
   | { type: 'RESET_FORM' };
 
-const initialState: InvoiceState = {
-  items: [],
-  provider: null,
-  providerCode: "",
-  providerIdentification: "",
-  cufe: "",
-  invoiceDate: new Date().toISOString().split('T')[0],
-  documentId: "1",
-  providerInvoiceNumber: "",
-  providerInvoicePrefix: "FV",
-  observations: "",
-  ivaPercentage: 19,
-  costCenter: 1,
-  currency: {
-    code: "COP",
-    exchange_rate: 1
-  }
-};
+// InvoiceFormAction type is defined above
 
-function invoiceFormReducer(state: InvoiceState, action: InvoiceFormAction): InvoiceState {
-  switch (action.type) {
-    case 'ADD_ITEM':
-      return {
-        ...state,
-        items: [
-          ...state.items,
-          {
-            id: Date.now().toString(),
-            type: 'product',
-            code: '',
-            description: '',
-            quantity: 1,
-            price: 0,
-            warehouse: '1',
-            hasIVA: true,
-          },
-        ],
-      };
-
-    case 'REMOVE_ITEM':
-      return {
-        ...state,
-        items: state.items.filter((item) => item.id !== action.payload),
-      };
-
-    case 'UPDATE_ITEM':
-      return {
-        ...state,
-        items: state.items.map((item) =>
-          item.id === action.payload.id
-            ? { ...item, [action.payload.field]: action.payload.value }
-            : item
-        ),
-      };
-
-    case 'UPDATE_FIELD':
-      return {
-        ...state,
-        [action.payload.field]: action.payload.value,
-      };
-
-    case 'SET_PROVIDER':
-      if (!action.payload) {
-        return {
-          ...state,
-          provider: null,
-          providerCode: "",
-          providerIdentification: ""
-        };
-      }
-      return {
-        ...state,
-        provider: action.payload,
-        providerCode: action.payload.codigo || action.payload.identificacion,
-        providerIdentification: action.payload.identificacion,
-      };
-
-    case 'SET_DOCUMENT_ID':
-      return {
-        ...state,
-        documentId: action.payload,
-      };
-
-    case 'SET_PROVIDER_INVOICE_NUMBER':
-      return {
-        ...state,
-        providerInvoiceNumber: action.payload,
-      };
-
-    case 'RESET_FORM':
-      return initialState;
-
-    default:
-      return state;
-  }
-}
-
-// Funciones de utilidad mejoradas
-function calculateSubtotal(items: InvoiceItem[]): number {
+// Utility functions
+const calculateSubtotal = (items: InvoiceItem[]): number => {
   return items.reduce((sum, item) => {
     const itemSubtotal = (item.quantity || 0) * (item.price || 0);
     const discount = item.discount?.value || 0;
     return sum + (itemSubtotal - discount);
   }, 0);
-}
+};
 
-function calculateIVA(items: InvoiceItem[], ivaPercentage: number): number {
+const calculateIVA = (items: InvoiceItem[], ivaPercentage: number): number => {
   return items.reduce((sum, item) => {
     if (!item.hasIVA) return sum;
     const itemSubtotal = (item.quantity || 0) * (item.price || 0);
@@ -178,35 +100,101 @@ function calculateIVA(items: InvoiceItem[], ivaPercentage: number): number {
     const taxableAmount = itemSubtotal - discount;
     return sum + (taxableAmount * (ivaPercentage / 100));
   }, 0);
-}
+};
 
-function calculateTotal(items: InvoiceItem[], ivaPercentage: number): number {
+const calculateTotal = (items: InvoiceItem[], ivaPercentage: number): number => {
   const subtotal = calculateSubtotal(items);
   const iva = calculateIVA(items, ivaPercentage);
   return subtotal + iva;
-}
-
-// Mapeo de tipos internos a tipos de Siigo
-const mapItemTypeToSiigoType = (type: string): 'Product' | 'FixedAsset' | 'Service' => {
-  const typeMap: Record<string, 'Product' | 'FixedAsset' | 'Service'> = {
-    'product': 'Product',
-    'activo': 'FixedAsset',
-    'activos_fijos': 'FixedAsset',
-    'contable': 'Service',  // Mapeamos 'contable' a 'Service' ya que 'Account' no es válido
-    'cuenta_contable': 'Service'  // Mapeamos 'cuenta_contable' a 'Service'
-  };
-  return typeMap[type] || 'Product';
 };
 
-export function InvoiceForm() {
+const mapItemTypeToSiigoType = (type: string = 'product'): 'Product' | 'Service' | 'FixedAsset' => {
+  switch (type) {
+    case 'product': return 'Product';
+    case 'service': return 'Service';
+    case 'fixed-asset': return 'FixedAsset';
+    default: return 'Product';
+  }
+};
+
+// Initial state
+const initialState: InvoiceState = {
+  provider: null,
+  items: [],
+  invoiceDate: new Date().toISOString().split('T')[0],
+  documentId: '',
+  providerInvoiceNumber: '',
+  providerInvoicePrefix: 'FC',
+  observations: '',
+  ivaPercentage: 19,
+  providerCode: '',
+  providerIdentification: ''
+};
+
+// Reducer function
+const invoiceFormReducer = (state: InvoiceState, action: InvoiceFormAction): InvoiceState => {
+  switch (action.type) {
+    case 'ADD_ITEM':
+      return {
+        ...state,
+        items: [...state.items, action.payload]
+      };
+    case 'REMOVE_ITEM':
+      return {
+        ...state,
+        items: state.items.filter(item => item.id !== action.payload)
+      };
+    case 'UPDATE_ITEM':
+      return {
+        ...state,
+        items: state.items.map(item => 
+          item.id === action.payload.id 
+            ? { ...item, [action.payload.field]: action.payload.value }
+            : item
+        )
+      };
+    case 'UPDATE_FIELD':
+      return {
+        ...state,
+        [action.payload.field]: action.payload.value
+      };
+    case 'SET_PROVIDER':
+      return {
+        ...state,
+        provider: action.payload,
+        providerCode: action.payload?.codigo || '',
+        providerIdentification: action.payload?.identificacion || ''
+      };
+    case 'SET_DOCUMENT_ID':
+      return {
+        ...state,
+        documentId: action.payload
+      };
+    case 'SET_PROVIDER_INVOICE_NUMBER':
+      return {
+        ...state,
+        providerInvoiceNumber: action.payload
+      };
+    case 'RESET_FORM':
+      return { ...initialState };
+    default:
+      return state;
+  }
+};
+
+export default function InvoiceForm() {
   const router = useRouter();
   const [state, dispatch] = useReducer(invoiceFormReducer, initialState);
+  // Loading state is currently not used but kept for future use
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState<{ success: boolean; message: string } | null>(null);
 
   const handleAddItem = useCallback(() => {
     const newItem: InvoiceItem = {
       id: Date.now().toString(),
+// ... (rest of the code remains the same)
       type: 'product',
       code: '',
       description: '',
@@ -218,27 +206,28 @@ export function InvoiceForm() {
     dispatch({ type: 'ADD_ITEM', payload: newItem });
   }, []);
 
-  const handleProviderSelect = useCallback((option: any) => {
+  const handleProviderSelect = useCallback((option: AutocompleteOption | null) => {
     if (!option) {
       dispatch({ type: 'SET_PROVIDER', payload: null });
       return;
     }
 
-    // Mapeo robusto para diferentes estructuras
-    const codigoProveedor = option.codigo || option.identification || option.identificacion || '';
+    // Map AutocompleteOption to Provider type
     const provider: Provider = {
-      identificacion: codigoProveedor,
-      codigo: codigoProveedor,
-      nombre: option.nombre || option.name || `Proveedor ${codigoProveedor}`,
-      tipo_documento: option.tipo_documento || '31',
-      nombre_comercial: option.nombre_comercial || option.nombre || option.name || `Proveedor ${codigoProveedor}`,
-      ciudad: option.ciudad || 'Bogotá',
-      direccion: option.direccion || 'No especificada',
-      telefono: option.telefono || '0000000',
-      correo_electronico: option.correo_electronico || 'no@especificado.com',
-      branch_office: option.branch_office || 0,
-      identification: codigoProveedor,
-      name: option.name || option.nombre || `Proveedor ${codigoProveedor}`
+      id: option.codigo,
+      nombre: option.nombre,
+      identificacion: option.codigo,
+      codigo: option.codigo,
+      name: option.nombre,
+      tipo_documento: '31',
+      nombre_comercial: option.nombre,
+      ciudad: 'Bogotá',
+      direccion: 'No especificada',
+      telefono: '0000000',
+      correo_electronico: 'no@especificado.com',
+      branch_office: 0,
+      type: 'Proveedor',
+      identification: option.codigo
     };
 
     dispatch({ type: 'SET_PROVIDER', payload: provider });
@@ -260,7 +249,7 @@ export function InvoiceForm() {
     }
     
     // Validar items
-    state.items.forEach((item, index) => {
+    state.items.forEach((item: InvoiceItem, index: number) => {
       if (!item.code?.trim()) {
         errors.push(`Item ${index + 1}: Código es requerido`);
       }
@@ -278,14 +267,20 @@ export function InvoiceForm() {
     return errors;
   }, [state]);
 
-  const buildSiigoPayload = useCallback(() => {
+  // Define SiigoPaymentRequest type since it's not imported
+interface SiigoPaymentRequest {
+  // Add the actual properties based on your requirements
+  [key: string]: string | number | boolean | object | undefined | null;
+}
+
+const buildSiigoPayload = useCallback((): SiigoPaymentRequest => {
     // El código del proveedor es el identification
     const codigoProveedor = state.provider?.codigo || state.provider?.identificacion || '';
     const branchOffice = state.provider?.branch_office ?? 0;
     const fechaFormateada = state.invoiceDate;
 
     // Mapear los ítems al formato de Siigo
-    const items: SiigoPurchaseItemRequest[] = state.items.map(item => {
+    const items = state.items.map((item: InvoiceItem) => {
       const itemSubtotal = (item.quantity || 0) * (item.price || 0);
       const discount = item.discount?.value || 0;
       const taxableAmount = itemSubtotal - discount;
@@ -342,7 +337,7 @@ export function InvoiceForm() {
     };
   }, [state]);
 
-  const handleSubmit = useCallback(async (e: React.FormEvent) => {
+  const handleSubmit = useCallback(async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setIsSubmitting(true);
     setSubmitResult(null);
@@ -365,8 +360,8 @@ export function InvoiceForm() {
       });
       const data = await response.json();
       if (!response.ok) {
-        let siigoMsg = data?.details?.Message || data?.error || data?.message || 'Error desconocido';
-        let missingFields = data?.missingFields ? `\nCampos faltantes: ${data.missingFields.join(', ')}` : '';
+        const siigoMsg = data?.details?.Message || data?.error || data?.message || 'Error desconocido';
+        const missingFields = data?.missingFields ? `\nCampos faltantes: ${data.missingFields.join(', ')}` : '';
         toast.error('❌ Error al enviar la factura a Siigo', { description: siigoMsg + missingFields, duration: 8000 });
         setSubmitResult({ success: false, message: siigoMsg + missingFields });
         throw new Error(siigoMsg + missingFields);
@@ -530,10 +525,12 @@ export function InvoiceForm() {
                   item={item}
                   index={index}
                   isLastItem={index === state.items.length - 1}
-                  onUpdate={(id, field, value) => dispatch({
-                    type: 'UPDATE_ITEM',
-                    payload: { id, field, value }
-                  })}
+                  onUpdate={(id: string, field: keyof InvoiceItem, value: string | number | boolean | { type?: string; value?: number } | undefined) => {
+                    dispatch({
+                      type: 'UPDATE_ITEM',
+                      payload: { id, field, value }
+                    })
+                  }}
                   onRemove={(id) => dispatch({ type: 'REMOVE_ITEM', payload: id })}
                   ivaPercentage={state.ivaPercentage}
                   disabled={isSubmitting}

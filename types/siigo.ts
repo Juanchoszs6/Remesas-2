@@ -70,6 +70,7 @@ export interface SiigoPurchaseRequest {
   tax_included?: boolean;
   items: SiigoItem[];
   payments: SiigoPayment[];
+  warehouse?: string;
 }
 
 // Respuesta de la API de Siigo
@@ -122,3 +123,58 @@ export interface SiigoPurchaseResponse {
 // Tipos auxiliares para mantener compatibilidad
 export type SiigoPurchaseItemRequest = SiigoItem;
 export type SiigoPaymentRequest = SiigoPayment;
+
+// Types for form data
+export interface FormData {
+  selectedProvider?: {
+    identification: string;
+    branch_office?: number;
+  };
+  invoiceDate?: string;
+  providerInvoiceNumber?: string;
+  providerInvoicePrefix?: string;
+  costCenter?: string;
+  observations?: string;
+  sedeEnvio?: string;
+  hasIVA?: boolean;
+  ivaPercentage?: number;
+  items: InvoiceItem[];
+}
+
+export interface SiigoInvoiceRequest {
+  document: SiigoDocument;
+  date: string;
+  items: SiigoItem[];
+  payments: SiigoPayment[];
+  supplier: SiigoSupplier;
+  cost_center?: number;
+  provider_invoice?: SiigoProviderInvoice;
+  observations?: string;
+  additional_fields?: {
+    warehouse?: string;
+    prefix?: string;
+  };
+}
+
+export interface SiigoAuthResponse {
+  access_token: string;
+  expires_in: number;
+  token_type: string;
+}
+
+export interface SiigoExpenseRequest {
+  document: SiigoDocument;
+  date: string;
+  supplier: SiigoSupplier;
+  category: string;
+  description: string;
+  amount: number;
+  tax_included: boolean;
+  cost_center?: number;
+  observations?: string;
+  payment: {
+    id: number;
+    value: number;
+    due_date: string;
+  };
+}

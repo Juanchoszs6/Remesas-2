@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { 
-  FormData, 
-  SiigoInvoiceRequest, 
-  SiigoInvoiceItemRequest, 
-  SiigoAuthResponse,
+  FormData,
+  // SiigoInvoiceRequest, // Used in type definitions
+  // SiigoAuthResponse, // Used in type definitions
   InvoiceItem,
   SiigoPurchaseRequest,
-  SiigoExpenseRequest
+  SiigoExpenseRequest,
+  SiigoItem
 } from '../../../../types/siigo';
 
 // Función para obtener token desde nuestra API
@@ -46,7 +46,7 @@ function validarDatosFormulario(datosFormulario: FormData): { valid: boolean; er
   }
 
   // Validar items
-  datosFormulario.items?.forEach((item, index) => {
+  datosFormulario.items?.forEach((item: InvoiceItem, index: number) => {
     if (!item.description?.trim()) {
       errors.push(`Item ${index + 1}: La descripción es obligatoria`);
     }
@@ -69,30 +69,30 @@ function mapearFacturaCompra(datosFormulario: FormData): SiigoPurchaseRequest {
   const fechaFactura = datosFormulario.invoiceDate || new Date().toISOString().split('T')[0];
   
   // Mapear items con estructura correcta para SIIGO
-  const items: SiigoInvoiceItemRequest[] = datosFormulario.items.map((item: InvoiceItem) => {
+  const items: SiigoItem[] = datosFormulario.items.map((item: InvoiceItem) => {
     const basePrice = item.price || 0;
     const quantity = item.quantity || 1;
     const subtotal = basePrice * quantity;
+    const _taxValue = item.hasIVA ? Math.round(subtotal * 0.19 * 100) / 100 : 0;
     
     return {
+      type: item.type === 'product' ? 'Product' : 
+            item.type === 'activo' ? 'FixedAsset' : 'Service',
       code: item.code || 'ITEM001',
       description: item.description?.trim() || 'Producto/Servicio',
       quantity: quantity,
       price: basePrice,
       discount: 0, // Sin descuento por defecto
-      taxes: item.hasIVA ? [
-        {
-          id: 13156, // ID estándar de IVA 19% en SIIGO
-          value: Math.round(subtotal * 0.19 * 100) / 100
-        }
-      ] : []
+      taxes: item.hasIVA ? [{ id: 13156 }] : []
     };
   });
 
   // Calcular totales
   const subtotal = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
   const totalTaxes = items.reduce((sum, item) => {
-    return sum + (item.taxes?.reduce((taxSum, tax) => taxSum + (tax.value || 0), 0) || 0);
+    const itemTotal = item.price * item.quantity;
+    const itemTax = item.taxes?.length ? Math.round(itemTotal * 0.19 * 100) / 100 : 0;
+    return sum + itemTax;
   }, 0);
   const total = subtotal + totalTaxes;
 
@@ -105,8 +105,10 @@ function mapearFacturaCompra(datosFormulario: FormData): SiigoPurchaseRequest {
       identification: datosFormulario.selectedProvider?.identification || '',
       branch_office: 0
     },
-    number: datosFormulario.providerInvoiceNumber ? 
-      parseInt(datosFormulario.providerInvoiceNumber) : undefined,
+    provider_invoice: datosFormulario.providerInvoiceNumber ? {
+      prefix: datosFormulario.providerInvoicePrefix || '',
+      number: datosFormulario.providerInvoiceNumber
+    } : undefined,
     cost_center: datosFormulario.costCenter ? 
       parseInt(datosFormulario.costCenter) : undefined,
     observations: datosFormulario.observations?.trim() || 'Factura de compra generada desde formulario web',
@@ -118,10 +120,7 @@ function mapearFacturaCompra(datosFormulario: FormData): SiigoPurchaseRequest {
         due_date: fechaFactura // Fecha de vencimiento igual a fecha de factura
       }
     ],
-    additional_fields: {
-      warehouse: datosFormulario.sedeEnvio || '1',
-      prefix: datosFormulario.providerInvoicePrefix || ''
-    }
+    warehouse: datosFormulario.sedeEnvio || '0'
   };
 }
 
@@ -131,8 +130,8 @@ function mapearGasto(datosFormulario: FormData): SiigoExpenseRequest {
   
   // Para gastos, tomamos el primer item como referencia
   const primerItem = datosFormulario.items[0];
-  const montoTotal = primerItem.price * primerItem.quantity;
-  const montoIVA = primerItem.hasIVA ? montoTotal * 0.19 : 0;
+  const montoTotal = (primerItem.price || 0) * (primerItem.quantity || 1);
+  const montoIVA = (primerItem.hasIVA) ? montoTotal * 0.19 : 0;
   const total = montoTotal + montoIVA;
 
   return {
@@ -195,7 +194,8 @@ export async function POST(request: NextRequest) {
     // Detectar si es gasto (un solo item con descripción de gasto) o factura de compra
     const esGasto = datosFormulario.items.length === 1 && 
                    (datosFormulario.items[0].description?.toLowerCase().includes('gasto') ||
-                    datosFormulario.items[0].type === 'service');
+                    datosFormulario.items[0].type === 'contable' ||
+                    datosFormulario.items[0].type === 'activo');
     
     if (esGasto) {
       console.log('📄 Procesando como gasto/egreso...');

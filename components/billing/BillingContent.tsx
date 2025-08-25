@@ -20,7 +20,6 @@ import {
   Shield, 
   TrendingUp, 
   TrendingDown,
-  Calendar,
   Package,
   AlertCircle,
   CheckCircle,
@@ -70,8 +69,10 @@ export default function BillingContent({ user }: BillingContentProps) {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [analytics, setAnalytics] = useState<InvoiceAnalytics | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [_activeTab, _setActiveTab] = useState('overview');
+  const [_timeRange, _setTimeRange] = useState('month');
+  const [_selectedSupplier, _setSelectedSupplier] = useState<{ id: string; name: string } | null>(null);
   const [selectedPeriod, setSelectedPeriod] = useState('6m');
-  // Agregar la opción 'Hoy' al filtro de período
   const router = useRouter();
 
   // Función para cargar datos de analytics desde SIIGO
@@ -98,18 +99,31 @@ export default function BillingContent({ user }: BillingContentProps) {
         }
       }
       
-      const analyticsData: InvoiceAnalytics = await response.json();
+      const responseData = await response.json();
       
       // Validar que la respuesta tenga la estructura esperada
-      if (!analyticsData || typeof analyticsData !== 'object') {
+      if (!responseData || typeof responseData !== 'object') {
         throw new Error('Formato de respuesta inválido');
       }
       
+      // Asegurarse de que los datos tengan la estructura correcta
+      const analyticsData: InvoiceAnalytics = {
+        totalInvoices: responseData.totalInvoices || 0,
+        totalAmount: responseData.totalAmount || 0,
+        averageAmount: responseData.averageAmount || 0,
+        monthlyGrowth: responseData.monthlyGrowth || 0,
+        topSuppliers: Array.isArray(responseData.topSuppliers) ? responseData.topSuppliers : [],
+        monthlyData: Array.isArray(responseData.monthlyData) ? responseData.monthlyData : [],
+        categoryBreakdown: Array.isArray(responseData.categoryBreakdown) ? responseData.categoryBreakdown : [],
+        recentInvoices: Array.isArray(responseData.recentInvoices) ? responseData.recentInvoices : []
+      };
+      
       setAnalytics(analyticsData);
       toast.success('Analytics cargados exitosamente');
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error al cargar analytics:', error);
-      toast.error(`Error al cargar los datos de analytics: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : 'Error desconocido al cargar los datos';
+      toast.error(`Error al cargar los datos de analytics: ${errorMessage}`);
     } finally {
       setIsLoading(false);
     }
@@ -123,16 +137,17 @@ export default function BillingContent({ user }: BillingContentProps) {
         method: 'POST',
       });
 
-      if (response.ok) {
-        toast.success('Sesión cerrada exitosamente');
-        router.push('/login');
-        router.refresh();
-      } else {
+      if (!response.ok) {
         throw new Error('Error al cerrar sesión');
       }
-    } catch (error) {
-      toast.error('Error al cerrar sesión');
-      console.error('Logout error:', error);
+
+      // Redirigir al login
+      router.push('/login');
+      router.refresh();
+    } catch (error: unknown) {
+      console.error('Error al cerrar sesión:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+      toast.error(`Error al cerrar sesión: ${errorMessage}`);
     } finally {
       setIsLoggingOut(false);
     }

@@ -1,4 +1,4 @@
-interface SiigoApiResponse<T> {
+export interface SiigoApiResponse<T> {
   results: T[];
   pagination?: {
     page: number;
@@ -66,42 +66,71 @@ export interface SiigoPurchaseInvoice {
   };
 }
 
+export class SiigoApiError extends Error {
+  public readonly code?: string | number;
+  public readonly details?: Record<string, unknown>;
+  
+  constructor(message: string, code?: string | number, details?: Record<string, unknown>) {
+    super(message);
+    this.name = 'SiigoApiError';
+    this.code = code;
+    this.details = details;
+  }
+}
+
 export async function fetchSiigoData<T>(
   endpoint: string,
   authToken: string,
-  params: Record<string, string | number> = {}
+  params: Record<string, string | number | boolean> = {}
 ): Promise<SiigoApiResponse<T>> {
-  const siigoApiUrl = process.env.SIIGO_API_URL || 'https://api.siigo.com/v1';
-  const url = new URL(`${siigoApiUrl}${endpoint}`);
+  const query = new URLSearchParams();
   
-  // Add query parameters
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== null) {
-      url.searchParams.append(key, String(value));
+      query.append(key, String(value));
     }
   });
 
-  const response = await fetch(url.toString(), {
-    headers: {
-      'Authorization': `Bearer ${authToken}`,
-      'Content-Type': 'application/json',
-      'Partner-Id': process.env.SIIGO_PARTNER_ID || 'RemesasApp',
-    },
-    next: { revalidate: 3600 }, // Cache for 1 hour
-  });
+  const baseUrl = process.env.SIIGO_API_URL || 'https://api.siigo.com/v1';
+  const url = `${baseUrl}/${endpoint.replace(/^\/+|\/+$/g, '')}${query.toString() ? `?${query}` : ''}`;
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.message || `Error al obtener datos de ${endpoint}`);
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${authToken}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const errorMessage = data.message || response.statusText;
+      throw new SiigoApiError(
+        `Siigo API error: ${errorMessage}`,
+        data.code || response.status,
+        data.details
+      );
+    }
+
+    return data as SiigoApiResponse<T>;
+  } catch (error) {
+    console.error('Error in fetchSiigoData:', error);
+    if (error instanceof SiigoApiError) {
+      throw error;
+    }
+    throw new SiigoApiError(
+      error instanceof Error ? error.message : 'Unknown error occurred',
+      'UNKNOWN_ERROR'
+    );
   }
-
-  return response.json();
 }
 
 export async function fetchAllPages<T>(
   endpoint: string,
   authToken: string,
-  pageSize = 30
+  pageSize = 30,
 ): Promise<T[]> {
   const siigoApiUrl = process.env.SIIGO_API_URL || 'https://api.siigo.com/v1';
   const allItems: T[] = [];

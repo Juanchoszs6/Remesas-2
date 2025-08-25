@@ -8,7 +8,14 @@ import { Loader2, Database, CheckCircle, XCircle } from 'lucide-react';
 
 export default function SetupPage() {
   const [isLoading, setIsLoading] = useState(false);
-  const [result, setResult] = useState<any>(null);
+  interface DatabaseResult {
+    success: boolean;
+    message: string;
+    tables?: Array<{ table_name: string }>;
+    tablesCount?: number;
+  }
+
+  const [result, setResult] = useState<DatabaseResult | null>(null);
   const [error, setError] = useState('');
 
   const setupDatabase = async () => {
@@ -28,8 +35,8 @@ export default function SetupPage() {
       } else {
         setError(data.error || 'Error al configurar la base de datos');
       }
-    } catch (err: any) {
-      setError(err.message || 'Error de conexión');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Error de conexión');
     } finally {
       setIsLoading(false);
     }
@@ -49,8 +56,8 @@ export default function SetupPage() {
       } else {
         setError(data.error || 'Error al probar la base de datos');
       }
-    } catch (err: any) {
-      setError(err.message || 'Error de conexión');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Error de conexión');
     } finally {
       setIsLoading(false);
     }
@@ -87,7 +94,7 @@ export default function SetupPage() {
                     <div className="mt-2">
                       <p>Tablas encontradas: {result.tablesCount}</p>
                       <ul className="list-disc list-inside">
-                        {result.tables.map((table: any, index: number) => (
+                        {result.tables.map((table, index) => (
                           <li key={index}>{table.table_name}</li>
                         ))}
                       </ul>

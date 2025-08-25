@@ -10,18 +10,6 @@ const CONFIG = {
   DOCUMENT_KEYWORDS: ['comprobante', 'factura', 'documento', 'nro', 'numero']
 }
 
-// Tipos de respuesta
-interface ProcessResult {
-  success: boolean
-  filename: string
-  fileSize: number
-  totalValue?: number
-  processed?: number
-  skipped?: number
-  error?: string
-  details?: string
-  debugInfo?: any
-}
 
 /**
  * Función principal para manejar las peticiones POST
@@ -80,7 +68,7 @@ export async function POST(request: NextRequest) {
     const worksheet = workbook.Sheets[firstSheetName]
     
     // Convertir a JSON
-    const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1, defval: '' })
+    const jsonData = XLSX.utils.sheet_to_json<unknown[]>(worksheet, { header: 1, defval: '' })
     
     if (jsonData.length < 2) {
       throw new Error('El archivo no contiene suficientes filas de datos')
@@ -221,7 +209,7 @@ function parseNumericValue(str: string): number | null {
   if (!str) return null
   
   // Limpiar el string
-  let cleanStr = String(str)
+  const cleanStr = String(str)
     .replace(/[^\d.,-]/g, '') // Mantener solo números, puntos, comas y signos negativos
     .replace(/\s+/g, '')      // Eliminar espacios
     .replace(/\./g, '')       // Eliminar puntos de miles

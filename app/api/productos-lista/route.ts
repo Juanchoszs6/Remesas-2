@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
   const query = searchParams.get('q');
 
   let sqlQuery = '';
-  let values: any[] = [];
+  let values: string[] = [];
 
   if (!query || query.trim() === '') {
     // Sin parámetro de búsqueda → devolver TODOS los productos

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { registerSchema } from '@/lib/validations';
-import { createUser, findUserByEmail, createSession, setSessionCookie } from '@/lib/auth';
+import { createUser, findUserByEmail, createSession } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
   try {
@@ -47,12 +47,12 @@ export async function POST(request: NextRequest) {
     
     return response;
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Registration error:', error);
     
-    if (error.name === 'ZodError') {
+    if (error && typeof error === 'object' && 'name' in error && error.name === 'ZodError' && 'errors' in error) {
       return NextResponse.json(
-        { error: 'Datos de entrada inválidos', details: error.errors },
+        { error: 'Datos de entrada inválidos', details: (error as { errors: unknown }).errors },
         { status: 400 }
       );
     }

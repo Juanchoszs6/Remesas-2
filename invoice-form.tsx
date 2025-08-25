@@ -1,6 +1,7 @@
 'use client'
 
-import { InvoiceForm } from '@/components/invoice/InvoiceForm'
+import React from 'react'
+import InvoiceForm from '@/components/invoice/InvoiceForm'
 
 export default function SiigoInvoiceForm() {
   return <InvoiceForm />

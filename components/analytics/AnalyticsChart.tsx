@@ -122,7 +122,7 @@ export function AnalyticsChart({
   title, 
   documentType, 
   data, 
-  timeRange = 'month',
+  timeRange: _timeRange = 'month',
   className = ''
 }: AnalyticsChartProps) {
   const currentYear = useMemo(() => new Date().getFullYear(), []);
@@ -204,7 +204,7 @@ export function AnalyticsChart({
           maxRotation: 0,
           autoSkip: false,
           padding: 10,
-          callback: (value: number | string, index: number, values) => {
+          callback: (value: number | string, index: number, _values) => {
             // Get the full month name from the chart's labels
             const monthName = chartMonths[index] || '';
             // Return the first 3 letters of the month name

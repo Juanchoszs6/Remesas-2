@@ -28,10 +28,10 @@ interface SiigoTax {
 }
 
 // Tipos para descuentos según Siigo
-interface SiigoDiscount {
-  percentage?: number;
-  value?: number;
-}
+// interface SiigoDiscount {
+//   percentage?: number;
+//   value?: number;
+// }
 
 // Item según la estructura exacta de Siigo
 interface SiigoItem {

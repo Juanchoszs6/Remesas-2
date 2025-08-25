@@ -1,3 +1,4 @@
+import * as React from "react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { NumberInput } from "@/components/ui/number-input"
@@ -10,7 +11,11 @@ import { Trash2 } from "lucide-react"
 
 type InvoiceItemFormProps = {
   item: InvoiceItem
-  onUpdate: (id: string, field: keyof InvoiceItem, value: any) => void
+  onUpdate: (
+    id: string, 
+    field: keyof InvoiceItem, 
+    value: string | number | boolean | { type?: string; value?: number } | undefined
+  ) => void
   onRemove: (id: string) => void
   index: number
   isLastItem: boolean

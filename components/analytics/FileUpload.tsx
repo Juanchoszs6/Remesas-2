@@ -7,7 +7,15 @@ import { toast } from 'sonner';
 import type { DocumentType } from './AnalyticsChart';
 
 interface FileUploadProps {
-  onFilesUploaded: (files: Array<{ type: DocumentType; file: File; data?: any }>) => void;
+  onFilesUploaded: (files: Array<{ type: DocumentType; file: File; data?: unknown }>) => void;
+}
+
+interface ProcessedData {
+  [key: string]: unknown;
+  _debug?: {
+    processedRows?: number;
+    [key: string]: unknown;
+  };
 }
 
 interface UploadedFileData {
@@ -15,8 +23,8 @@ interface UploadedFileData {
   type: DocumentType | 'unknown';
   status: 'uploading' | 'success' | 'error';
   error?: string;
-  data?: any;
-  debugInfo?: any;
+  data?: ProcessedData;
+  debugInfo?: Record<string, unknown>;
 }
 
 const documentTypeNames: Record<DocumentType, string> = {
@@ -72,7 +80,7 @@ export function FileUpload({ onFilesUploaded }: FileUploadProps) {
 
   const processFiles = async (filesToProcess: UploadedFileData[]) => {
     setIsUploading(true);
-    const results: Array<{ type: DocumentType; file: File; data?: any }> = [];
+    const results: Array<{ type: DocumentType; file: File; data?: Record<string, unknown> }> = [];
     
     try {
       for (let i = 0; i < filesToProcess.length; i++) {
@@ -158,23 +166,41 @@ export function FileUpload({ onFilesUploaded }: FileUploadProps) {
               } else if (response.status === 500) {
                 errorMessage = 'Error interno del servidor. Verifique los logs';
               }
-            } catch (e) {
+            } catch (_e) {
               console.error('No se pudo leer la respuesta de error');
             }
             
             throw new Error(errorMessage);
           }
           
-          let result;
+          let result: unknown;
           try {
             result = await response.json();
             console.log('Respuesta JSON del procesamiento Siigo:', result);
-          } catch (e) {
+          } catch (_e) {
             throw new Error('Respuesta inválida del servidor');
           }
           
-          if (!result.success) {
-            throw new Error(result.error || result.details || 'Error procesando archivo Siigo');
+          if (!result || typeof result !== 'object' || !('success' in result)) {
+            throw new Error('Respuesta inválida del servidor');
+          }
+          
+          // Define the expected response type
+          type ApiResponse = { 
+            success: boolean; 
+            error?: string; 
+            details?: string; 
+            data?: ProcessedData;
+            _debug?: {
+              processedRows?: number;
+              [key: string]: unknown;
+            };
+          };
+          
+          const resultData = result as ApiResponse;
+          
+          if (!resultData.success) {
+            throw new Error(resultData.error || resultData.details || 'Error procesando archivo Siigo');
           }
           
           // Determinar tipo de documento
@@ -183,28 +209,28 @@ export function FileUpload({ onFilesUploaded }: FileUploadProps) {
             // Intentar detectar desde el nombre del archivo
             detectedType = detectDocumentType(fileData.file.name);
             
-            if (detectedType === 'unknown') {
+            if (detectedType === 'unknown' && resultData.data) {
               // Intentar detectar desde los datos procesados
-              const dataTypes = Object.keys(result.data || {}).filter(key => 
-                key !== '_debug' && result.data[key]?.total > 0
-              );
+              const data = resultData.data;
+              const dataEntries = Object.entries(data)
+                .filter(([key]) => key !== '_debug')
+                .map(([type, value]) => {
+                  const typedValue = value as { total?: number } | undefined;
+                  return {
+                    type: type as DocumentType,
+                    total: typedValue?.total || 0
+                  };
+                })
+                .filter(item => item.total > 0);
               
-              if (dataTypes.length === 1) {
-                detectedType = dataTypes[0] as DocumentType;
-                console.log(`Tipo detectado desde datos Siigo: ${detectedType}`);
-              } else if (dataTypes.length > 1) {
-                // Si hay múltiples tipos, tomar el que tenga mayor total
-                let maxType = dataTypes[0];
-                let maxTotal = result.data[maxType]?.total || 0;
-                
-                for (const type of dataTypes) {
-                  if ((result.data[type]?.total || 0) > maxTotal) {
-                    maxTotal = result.data[type].total;
-                    maxType = type;
-                  }
+              if (dataEntries.length > 0) {
+                // Tomar el tipo con mayor total
+                const maxTotal = Math.max(...dataEntries.map(t => t.total));
+                const maxType = dataEntries.find(t => t.total === maxTotal)?.type;
+                if (maxType) {
+                  detectedType = maxType;
+                  console.log(`Tipo con mayor total detectado: ${detectedType}`);
                 }
-                detectedType = maxType as DocumentType;
-                console.log(`Tipo con mayor total detectado: ${detectedType}`);
               }
             }
           }
@@ -214,28 +240,35 @@ export function FileUpload({ onFilesUploaded }: FileUploadProps) {
           }
           
           // Actualizar archivo como exitoso
+          const responseData = result as ApiResponse;
+          const debugInfo = responseData._debug || (responseData.data as { _debug?: unknown })?._debug;
+          const processedRows = typeof debugInfo === 'object' && debugInfo !== null && 'processedRows' in debugInfo 
+            ? Number(debugInfo.processedRows) || 0 
+            : 0;
+          
+          const fileDataToUpdate: UploadedFileData = {
+            ...fileData,
+            status: 'success',
+            type: detectedType,
+            data: responseData.data,
+            debugInfo: debugInfo as Record<string, unknown> | undefined
+          };
+          
           setFiles(prev => 
-            prev.map(f => 
-              f.file === fileData.file 
-                ? { 
-                    ...f, 
-                    status: 'success' as const,
-                    type: detectedType as DocumentType,
-                    data: result.data,
-                    debugInfo: result.data._debug
-                } 
-                : f
-            )
+            prev.map(f => f.file === fileData.file ? fileDataToUpdate : f)
           );
           
           // Agregar a resultados
           results.push({
-            type: detectedType as DocumentType,
+            type: detectedType,
             file: fileData.file,
-            data: result.data
+            data: responseData.data
           });
           
-          toast.success(`${fileData.file.name} procesado como ${documentTypeNames[detectedType]} (${result.data._debug?.processedRows || 0} filas)`, { id: toastId });
+          toast.success(
+            `${fileData.file.name} procesado como ${documentTypeNames[detectedType]} (${processedRows} filas)`, 
+            { id: toastId }
+          );
           
         } catch (error) {
           console.error('Error procesando archivo Siigo:', error);
@@ -456,12 +489,12 @@ export function FileUpload({ onFilesUploaded }: FileUploadProps) {
                       <span>{getDocumentTypeName(fileData.type)}</span>
                       <span>•</span>
                       <span>{(fileData.file.size / 1024 / 1024).toFixed(2)} MB</span>
-                      {fileData.debugInfo?.processedRows && (
-                        <>
-                          <span>•</span>
-                          <span>{fileData.debugInfo.processedRows} filas procesadas</span>
-                        </>
-                      )}
+                      {fileData.debugInfo && 'processedRows' in fileData.debugInfo && (
+                      <>
+                        <span>•</span>
+                        <span>{String(fileData.debugInfo.processedRows)} filas procesadas</span>
+                      </>
+                    )}
                     </div>
                     {fileData.error && (
                       <p className="text-xs text-red-600 mt-1 truncate" title={fileData.error}>
@@ -470,12 +503,17 @@ export function FileUpload({ onFilesUploaded }: FileUploadProps) {
                     )}
                     {fileData.status === 'success' && fileData.data && (
                       <div className="text-xs text-green-600 mt-1">
-                        {Object.entries(fileData.data).map(([type, data]: [string, any]) => {
-                          if (type !== '_debug' && data?.total > 0) {
-                            return `${type}: ${data.total.toLocaleString()}`;
-                          }
-                          return null;
-                        }).filter(Boolean).join(', ')}
+                        {Object.entries(fileData.data)
+                          .filter(([key]) => key !== '_debug')
+                          .map(([type, data]) => {
+                            const typedData = data as { total?: number };
+                            if (typedData?.total && typedData.total > 0) {
+                              return `${type}: ${typedData.total.toLocaleString()}`;
+                            }
+                            return null;
+                          })
+                          .filter(Boolean)
+                          .join(', ')}
                       </div>
                     )}
                   </div>
@@ -545,11 +583,17 @@ export function FileUpload({ onFilesUploaded }: FileUploadProps) {
       {process.env.NODE_ENV === 'development' && files.some(f => f.debugInfo) && (
         <div className="bg-gray-50 border rounded-lg p-4">
           <h4 className="text-sm font-medium text-gray-800 mb-2">Información de Debug:</h4>
-          {files.filter(f => f.debugInfo).map((file, index) => (
-            <div key={index} className="text-xs text-gray-600 mb-2">
-              <strong>{file.file.name}:</strong> {file.debugInfo.processedRows} procesadas, {file.debugInfo.skippedRows} saltadas
-            </div>
-          ))}
+          {files.filter(f => f.debugInfo).map((file, index) => {
+            const debugInfo = file.debugInfo || {};
+            const processed = 'processedRows' in debugInfo ? debugInfo.processedRows : 0;
+            const skipped = 'skippedRows' in debugInfo ? debugInfo.skippedRows : 0;
+            
+            return (
+              <div key={index} className="text-xs text-gray-600 mb-2">
+                <strong>{file.file.name}:</strong> {String(processed)} procesadas, {String(skipped)} saltadas
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

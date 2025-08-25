@@ -55,18 +55,21 @@ export async function POST() {
       tablesCount: tablesResult.length
     });
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Database setup error:', error);
+    
+    const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+    const errorDetails = error && typeof error === 'object' ? {
+      code: 'code' in error ? error.code : undefined,
+      severity: 'severity' in error ? error.severity : undefined,
+      detail: 'detail' in error ? error.detail : undefined,
+      hint: 'hint' in error ? error.hint : undefined
+    } : {};
     
     return NextResponse.json({
       success: false,
-      error: error.message,
-      details: {
-        code: error.code,
-        severity: error.severity,
-        detail: error.detail,
-        hint: error.hint
-      }
+      error: errorMessage,
+      details: errorDetails
     }, { status: 500 });
   }
 }

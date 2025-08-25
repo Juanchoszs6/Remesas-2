@@ -30,21 +30,37 @@ interface ProcessedData {
   averageValue?: number
 }
 
+interface DebugInfo {
+  structure?: unknown;
+  bestStructure?: unknown;
+  debugSamples?: Array<Record<string, unknown>>;
+  errorSamples?: Array<Record<string, unknown>>;
+  sampleCount?: number;
+  totalRows?: number;
+  totalColumns?: number;
+  totalRowsScanned?: number;
+  allCandidates?: unknown[];
+  jsonDataLength?: number;
+  jsonDataSample?: unknown[];
+  memoryUsedMB?: number;
+  [key: string]: unknown; // Allow additional properties
+}
+
 interface FileProcessingResult {
-  success: boolean
-  filename: string
-  fileSize: number
-  documentType?: DocumentType
-  month?: number
-  year?: number
-  totalValue?: number
-  processed?: number
-  skipped?: number
-  error?: string
-  details?: string
-  debugInfo?: any
-  processingTime?: number
-  memoryUsage?: number
+  success: boolean;
+  filename: string;
+  fileSize: number;
+  documentType?: DocumentType;
+  month?: number;
+  year?: number;
+  totalValue?: number;
+  processed?: number;
+  skipped?: number;
+  error?: string;
+  details?: string;
+  debugInfo?: DebugInfo;
+  processingTime?: number;
+  memoryUsage?: number;
 }
 
 interface DataStructureCandidate {
@@ -134,8 +150,7 @@ const EXCEL_READING_STRATEGIES: ExcelReadingStrategy[] = [
       type: "array",
       cellText: true,
       raw: false,
-      cellDates: false,
-      defval: "",
+      cellDates: false
     },
     priority: 3,
   },
@@ -156,7 +171,7 @@ const EXCEL_READING_STRATEGIES: ExcelReadingStrategy[] = [
  * Parser robusto para valores monetarios colombianos
  * Maneja múltiples formatos: 1.234.567,89 | 1,234,567.89 | 1234567,89 | etc.
  */
-const parseColombianCurrencyRobust = (valueInput: any): CurrencyParseResult => {
+const parseColombianCurrencyRobust = (valueInput: string | number | boolean | null | undefined): CurrencyParseResult => {
   const originalValue = String(valueInput || "")
 
   if (!valueInput || valueInput === null || valueInput === undefined) {
@@ -358,7 +373,7 @@ const parseColombianCurrencyRobust = (valueInput: any): CurrencyParseResult => {
  * Parser robusto para fechas de Siigo
  * Maneja formatos: DD/MM/YYYY, DD/MM/YY, YYYY-MM-DD, números de Excel, etc.
  */
-const parseSiigoDateRobust = (dateValue: any): DateParseResult => {
+const parseSiigoDateRobust = (dateValue: string | number | boolean | Date | null | undefined): DateParseResult => {
   const originalValue = String(dateValue || "")
 
   if (!dateValue || dateValue === null || dateValue === undefined) {
@@ -489,7 +504,7 @@ const parseSiigoDateRobust = (dateValue: any): DateParseResult => {
  * Detecta inteligentemente la estructura de datos en el archivo Excel
  * Busca encabezados y filas de datos de manera flexible
  */
-const detectDataStructureIntelligent = (jsonData: any[][]): DataStructureCandidate[] => {
+const detectDataStructureIntelligent = (jsonData: (string | number | boolean | null)[][]): DataStructureCandidate[] => {
   console.log("[v0] Iniciando detección inteligente de estructura de datos...")
 
   const candidates: DataStructureCandidate[] = []
@@ -705,7 +720,7 @@ const detectDataStructureIntelligent = (jsonData: any[][]): DataStructureCandida
 /**
  * Detecta el tipo de documento basado en el nombre del archivo y contenido
  */
-const detectDocumentTypeAdvanced = (filename: string, sampleData?: any[][]): DocumentType => {
+const detectDocumentTypeAdvanced = (filename: string, sampleData?: (string | number | boolean | null)[][]): DocumentType => {
   const upperFilename = filename.toUpperCase()
 
   // Primero verificar si hay contenido de muestra para analizar
@@ -1085,12 +1100,12 @@ export async function POST(request: NextRequest) {
 /**
  * Procesa un archivo individual de manera robusta
  */
-async function processIndividualFileAdvanced(file: File, fileNumber: number): Promise<FileProcessingResult> {
+async function processIndividualFileAdvanced(file: File, _fileNumber: number): Promise<FileProcessingResult> {
   console.log(`[v0] 📁 Iniciando procesamiento: ${file.name}`)
 
   const startMemory = getMemoryUsage()
   let workbook: XLSX.WorkBook | null = null
-  const jsonData: any[][] = []
+  const jsonData: (string | number | boolean | null)[][] = []
 
   try {
     // Leer archivo con múltiples estrategias
@@ -1141,7 +1156,7 @@ async function processIndividualFileAdvanced(file: File, fileNumber: number): Pr
           defval: "",
           raw: false,
           dateNF: "yyyy-mm-dd",
-        }) as any[][]
+        }) as (string | number | boolean | null)[][]
 
         if (rawData.length > 0 && rawData[0].length > 1) {
           jsonData.push(...rawData)
@@ -1190,7 +1205,7 @@ async function processIndividualFileAdvanced(file: File, fileNumber: number): Pr
         if (maxCol > 0) {
           // Extraer datos con el rango real
           for (let R = 0; R <= maxRow; R++) {
-            const row: any[] = []
+            const row: (string | number | boolean | null)[] = []
             for (let C = 0; C <= maxCol; C++) {
               const cellAddress = { r: R, c: C }
               const cellRef = XLSX.utils.encode_cell(cellAddress)
@@ -1225,7 +1240,7 @@ async function processIndividualFileAdvanced(file: File, fileNumber: number): Pr
           const rawData = XLSX.utils.sheet_to_json(worksheet, {
             defval: "",
             raw: false,
-          }) as Record<string, any>[]
+          }) as Array<Record<string, string | number | boolean | null>>
 
           if (rawData.length > 0) {
             // Convertir objetos a arrays
@@ -1334,8 +1349,14 @@ async function processIndividualFileAdvanced(file: File, fileNumber: number): Pr
     let totalValue = 0
     let fileMonth = -1
     let fileYear = new Date().getFullYear()
-    const debugSamples: any[] = []
-    const errorSamples: any[] = []
+    const debugSamples: Array<Record<string, unknown>> = []
+    const errorSamples: Array<{
+      rowIndex: number;
+      originalValue: string;
+      parseMethod?: string;
+      parseConfidence?: number;
+      reason: string;
+    }> = []
 
     console.log(`[v0] 🔄 Procesando filas ${bestStructure.dataStartRow + 1} a ${bestStructure.dataEndRow}`)
 

@@ -1,22 +1,128 @@
-// app/api/siigo/get-purchases/route.ts
 import { NextResponse } from 'next/server';
 
 const SIIGO_BASE = (process.env.SIIGO_BASE_URL || 'https://api.siigo.com/v1').replace(/\/$/, '');
 const SIIGO_AUTH = (process.env.SIIGO_AUTH_URL || 'https://api.siigo.com/auth').replace(/\/$/, '');
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes cache TTL
 
 const CACHE_DURATION_MS = 10 * 60 * 1000;
 const PAGE_SIZE_DEFAULT = 50;
-const THROTTLE_BETWEEN_PAGES_MS = 300;
-const MAX_SERVER_PAGES = 100;
 
-interface CacheEntry {
+// Types for API responses and requests
+interface TestResult {
+  test: string;
+  error?: string;
+  url: string;
+}
+
+interface PurchaseFilters {
+  [key: string]: string | number | boolean | undefined;
+}
+
+interface PurchaseDiagnostics {
+  purchases: Purchase[];
+  pagesFetched: number;
+  totalFromAPI: number;
+  diagnostics: {
+    testResults?: (TestResult & { 
+      totalFound?: number; 
+      itemsInPage?: number; 
+      sampleItem?: Record<string, unknown> 
+    })[];
+    monthlyBreakdown?: Record<string, number>;
+    statusBreakdown?: Record<string, number>;
+    dateRanges?: { min?: Date; max?: Date };
+    sampleInvoices?: Partial<Purchase>[];
+    issues?: {
+      missingDates: number;
+      wrongYear: number;
+      totalAnalyzed: number;
+    };
+    // Additional properties used in the code
+    analysis?: PurchaseAnalysis;
+    apiEndpoint?: string;
+    requestedFilters?: Record<string, unknown>;
+    recommendations?: string[];
+  };
+}
+
+interface AuthRequestBody {
+  username: string | undefined;
+  access_key: string | undefined;
+  partner_id?: string;
+  [key: string]: string | number | boolean | undefined;
+}
+
+interface Purchase {
+  id?: string;
+  date?: string | number | Date;
+  issue_date?: string | number | Date;
+  issueDate?: string | number | Date;
+  fecha?: string | number | Date;
+  fecha_emision?: string | number | Date;
+  created_at?: string | number | Date;
+  updated_at?: string | number | Date;
+  metadata?: {
+    created?: string | number | Date;
+    created_at?: string | number | Date;
+    date?: string | number | Date;
+    [key: string]: unknown;
+  };
+  document?: {
+    date?: string | number | Date;
+    fecha?: string | number | Date;
+    issue_date?: string | number | Date;
+    [key: string]: unknown;
+  };
+  timestamp?: string | number | Date;
+  datetime?: string | number | Date;
+  created?: string | number | Date;
+  emitted_at?: string | number | Date;
+  [key: string]: unknown;
+}
+
+interface SiigoPagination {
+  page?: number;
+  page_size?: number;
+  total_results?: number;
+  total?: number;
+  [key: string]: unknown;
+}
+
+interface SiigoResponse<T = Record<string, unknown>> {
+  results?: T[];
+  data?: T[];
+  purchases?: T[];
+  items?: T[];
+  pagination?: SiigoPagination;
+  meta?: SiigoPagination;
+  [key: string]: unknown;
+}
+
+interface ApiResponse {
+  success: boolean;
+  purchases: Purchase[];
+  count: number;
+  year: number;
+  pagesFetched: number;
+  totalFromAPI?: number;
+  cached?: boolean;
+  processingTimeMs?: number;
+  diagnostics?: Record<string, unknown>;
+  monthlyBreakdown?: Record<string, number>;
+  statusBreakdown?: Record<string, number>;
+  recommendations?: string[];
+  analysis?: Record<string, unknown>;
+  dateRanges?: { min?: string; max?: string };
+}
+
+interface CacheEntry<T = Purchase> {
   ts: number;
-  data: any[];
+  data: T[];
   pagesFetched: number;
   totalFromAPI: number;
   monthlyBreakdown?: Record<string, number>;
   statusBreakdown?: Record<string, number>;
-  diagnostics?: any;
+  diagnostics?: Record<string, unknown>;
 }
 
 let cachedToken: string | null = null;
@@ -26,11 +132,20 @@ const purchasesCache = new Map<string, CacheEntry>();
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-const log = {
-  debug: (...args: any[]) => console.debug('[siigo-diagnostic]', ...args),
-  info: (...args: any[]) => console.info('[siigo-diagnostic]', ...args),
-  warn: (...args: any[]) => console.warn('[siigo-diagnostic]', ...args),
-  error: (...args: any[]) => console.error('[siigo-diagnostic]', ...args)
+type LogMethod = (...args: unknown[]) => void;
+
+interface Logger {
+  debug: LogMethod;
+  info: LogMethod;
+  warn: LogMethod;
+  error: LogMethod;
+}
+
+const log: Logger = {
+  debug: (...args: unknown[]) => console.debug('[siigo-diagnostic]', ...args),
+  info: (...args: unknown[]) => console.info('[siigo-diagnostic]', ...args),
+  warn: (...args: unknown[]) => console.warn('[siigo-diagnostic]', ...args),
+  error: (...args: unknown[]) => console.error('[siigo-diagnostic]', ...args)
 };
 
 async function getSiigoToken(): Promise<string> {
@@ -42,7 +157,7 @@ async function getSiigoToken(): Promise<string> {
     try {
       log.info('Obteniendo nuevo token de Siigo...');
       
-      const body: any = {
+      const body: AuthRequestBody = {
         username: process.env.SIIGO_USERNAME,
         access_key: process.env.SIIGO_ACCESS_KEY
       };
@@ -74,7 +189,8 @@ async function getSiigoToken(): Promise<string> {
       log.info(`Token obtenido exitosamente. Expira en ${expiresIn} segundos`);
       return token;
       
-    } catch (error: any) {
+    } catch (err) {
+      const error = err as Error;
       log.error('Error obteniendo token:', error.message);
       throw error;
     } finally {
@@ -96,13 +212,20 @@ async function callSiigoAPI(url: string, token: string): Promise<Response> {
   });
 }
 
-function extractPurchases(data: any): any[] {
+function extractPurchases(data: unknown): Purchase[] {
   if (!data) return [];
-  if (Array.isArray(data)) return data;
-  return data.results || data.data || data.purchases || data.items || [];
+  if (Array.isArray(data)) return data as Purchase[];
+  
+  const typedData = data as Record<string, unknown>;
+  const results = typedData.results as Purchase[] | undefined;
+  const dataArray = typedData.data as Purchase[] | undefined;
+  const purchases = typedData.purchases as Purchase[] | undefined;
+  const items = typedData.items as Purchase[] | undefined;
+  
+  return results || dataArray || purchases || items || [];
 }
 
-function extractPagination(data: any) {
+function extractPagination(data: SiigoResponse<unknown>) {
   const pagination = data?.pagination || data?.meta || {};
   return {
     currentPage: Number(pagination.page || 1),
@@ -115,7 +238,7 @@ function extractPagination(data: any) {
 /**
  * Extrae fecha de una factura con múltiples estrategias
  */
-function extractInvoiceDate(invoice: any): Date | null {
+function extractInvoiceDate(invoice: Purchase | null | undefined): Date | null {
   if (!invoice) return null;
 
   const dateFields = [
@@ -153,7 +276,7 @@ function extractInvoiceDate(invoice: any): Date | null {
         const date = new Date(field);
         if (!isNaN(date.getTime())) return date;
       }
-    } catch (e) {
+    } catch (_e) {
       continue;
     }
   }
@@ -164,11 +287,31 @@ function extractInvoiceDate(invoice: any): Date | null {
 /**
  * Analiza las facturas obtenidas para generar diagnósticos
  */
-function analyzePurchases(purchases: any[], year: number) {
+interface PurchaseAnalysis {
+  monthlyBreakdown: Record<string, number>;
+  statusBreakdown: Record<string, number>;
+  dateRanges: { min: string; max: string };
+  sampleInvoices: Array<{
+    id: string | number;
+    date: string;
+    status: string;
+    amount: string | number;
+    rawData: string[];
+  }>;
+  issues: {
+    missingDates: number;
+    wrongYear: number;
+    totalAnalyzed: number;
+  };
+  missingDates: number;
+  wrongYear: number;
+}
+
+function analyzePurchases(purchases: Purchase[], year: number): PurchaseAnalysis {
   const monthlyBreakdown: Record<string, number> = {};
   const statusBreakdown: Record<string, number> = {};
   const dateRanges: { min?: Date; max?: Date } = {};
-  const sampleInvoices: any[] = [];
+  const sampleInvoices: Partial<Purchase>[] = [];
   let missingDates = 0;
   let wrongYear = 0;
 
@@ -178,7 +321,7 @@ function analyzePurchases(purchases: any[], year: number) {
     monthlyBreakdown[`${year}-${month}`] = 0;
   }
 
-  purchases.forEach((purchase, index) => {
+  purchases.forEach((purchase) => {
     // Analizar fecha
     const date = extractInvoiceDate(purchase);
     if (date) {
@@ -199,41 +342,59 @@ function analyzePurchases(purchases: any[], year: number) {
     }
 
     // Analizar estado
-    const status = purchase.status || purchase.state || purchase.document_status || 'unknown';
+    const status = String(
+      (purchase as Record<string, unknown>).status || 
+      (purchase as Record<string, unknown>).state || 
+      (purchase as Record<string, unknown>).document_status || 
+      'unknown'
+    );
     statusBreakdown[status] = (statusBreakdown[status] || 0) + 1;
 
-    // Guardar muestras
-    if (index < 5) {
+    // Guardar muestras (máximo 5)
+    if (sampleInvoices.length < 5) {
+      const purchaseRecord = purchase as Record<string, unknown>;
       sampleInvoices.push({
-        id: purchase.id || purchase.number || index,
+        id: String(purchase.id || purchaseRecord.number || sampleInvoices.length),
         date: date?.toISOString() || 'NO_DATE',
         status: status,
-        amount: purchase.total || purchase.amount || 'NO_AMOUNT',
+        amount: purchaseRecord.total || purchaseRecord.amount || 'NO_AMOUNT',
         rawData: Object.keys(purchase).slice(0, 10) // Primeros 10 campos
       });
     }
   });
 
-  return {
+  const result: PurchaseAnalysis = {
     monthlyBreakdown,
     statusBreakdown,
     dateRanges: {
       min: dateRanges.min?.toISOString() || 'N/A',
       max: dateRanges.max?.toISOString() || 'N/A'
     },
-    sampleInvoices,
+    sampleInvoices: sampleInvoices as Array<{
+      id: string | number;
+      date: string;
+      status: string;
+      amount: string | number;
+      rawData: string[];
+    }>,
     issues: {
       missingDates,
       wrongYear,
       totalAnalyzed: purchases.length
-    }
+    },
+    missingDates,
+    wrongYear
   };
+
+  return result;
 }
 
 /**
  * Prueba múltiples configuraciones de filtros para encontrar facturas faltantes
  */
-async function testMultipleFilters(year: number, token: string) {
+// ... rest of the code remains the same ...
+// Prefix with underscore to indicate intentionally unused
+async function _testMultipleFilters(year: number, token: string) {
   const tests = [
     {
       name: 'Sin filtros de fecha',
@@ -295,7 +456,8 @@ async function testMultipleFilters(year: number, token: string) {
       }
 
       await sleep(500); // Evitar rate limits
-    } catch (error: any) {
+    } catch (err) {
+      const error = err as Error;
       results.push({
         test: test.name,
         error: error.message,
@@ -304,10 +466,21 @@ async function testMultipleFilters(year: number, token: string) {
     }
   }
 
-  return results;
+  return results.map(result => ({
+    test: result.test,
+    error: result.error,
+    url: result.url
+  }));
 }
 
-async function fetchPageWithRetry(pageNum: number, year: number, pageSize: number, token: string, filters: any = {}, maxRetries = 3): Promise<any> {
+async function fetchPageWithRetry(
+  pageNum: number, 
+  year: number, 
+  pageSize: number, 
+  token: string, 
+  filters: PurchaseFilters = {}, 
+  maxRetries = 3
+): Promise<SiigoResponse<Purchase>> {
   const startDate = `${year}-01-01`;
   const endDate = `${year}-12-31`;
   
@@ -320,12 +493,12 @@ async function fetchPageWithRetry(pageNum: number, year: number, pageSize: numbe
   // Agregar filtros adicionales
   Object.entries(filters).forEach(([key, value]) => {
     if (value !== undefined && value !== null) {
-      url.searchParams.set(key, value.toString());
+      url.searchParams.set(key, String(value));
     }
   });
 
-  let lastError: any = null;
-
+  let lastError: Error | null = null;
+  
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       log.debug(`Página ${pageNum} - Intento ${attempt}`);
@@ -349,10 +522,10 @@ async function fetchPageWithRetry(pageNum: number, year: number, pageSize: numbe
         throw new Error(`HTTP ${response.status}: ${errorText || response.statusText}`);
       }
 
-      const data = await response.json();
-      return data;
-
-    } catch (error: any) {
+      return await response.json();
+      
+    } catch (err) {
+      const error = err as Error;
       lastError = error;
       log.warn(`Error en página ${pageNum}, intento ${attempt}:`, error.message);
       
@@ -362,134 +535,130 @@ async function fetchPageWithRetry(pageNum: number, year: number, pageSize: numbe
     }
   }
 
-  throw lastError;
+  throw lastError || new Error(`No se pudo obtener la página ${pageNum} después de ${maxRetries} intentos`);
 }
 
-async function fetchAllPurchasesWithDiagnostics(year: number, pageSize: number = PAGE_SIZE_DEFAULT, additionalFilters: any = {}): Promise<{ purchases: any[], pagesFetched: number, totalFromAPI: number, diagnostics: any }> {
-  let token = await getSiigoToken();
-  let allPurchases: any[] = [];
-  let pagesFetched = 0;
-  let totalFromAPI = 0;
-
-  log.info(`=== INICIANDO OBTENCIÓN DIAGNÓSTICA DEL AÑO ${year} ===`);
-
-  try {
-    // Primero, probar diferentes configuraciones
-    const filterTests = await testMultipleFilters(year, token);
-    log.info('Resultados de pruebas de filtros:', filterTests);
-
-    // Obtener primera página
-    const firstPageData = await fetchPageWithRetry(1, year, pageSize, token, additionalFilters);
-    pagesFetched++;
-
-    const firstPagePurchases = extractPurchases(firstPageData);
-    allPurchases.push(...firstPagePurchases);
-
-    const paginationInfo = extractPagination(firstPageData);
-    totalFromAPI = paginationInfo.totalResults;
-    const totalPages = paginationInfo.totalPages;
-
-    log.info(`Primera página obtenida:`);
-    log.info(`- Items en página: ${firstPagePurchases.length}`);
-    log.info(`- Total en API: ${totalFromAPI}`);
-    log.info(`- Total páginas: ${totalPages}`);
-
-    // Obtener páginas restantes
-    if (totalPages > 1) {
-      const pagesToFetch = Math.min(totalPages, MAX_SERVER_PAGES);
-      
-      for (let page = 2; page <= pagesToFetch; page++) {
-        try {
-          const pageData = await fetchPageWithRetry(page, year, pageSize, token, additionalFilters);
-          pagesFetched++;
-
-          const pagePurchases = extractPurchases(pageData);
-          allPurchases.push(...pagePurchases);
-
-          if (page % 10 === 0) {
-            log.info(`Progreso: ${page}/${pagesToFetch} páginas | ${allPurchases.length} compras obtenidas`);
-          }
-
-          if (page < pagesToFetch) {
-            await sleep(THROTTLE_BETWEEN_PAGES_MS);
-          }
-
-        } catch (error: any) {
-          if (error.message.includes('Token expirado')) {
-            log.warn(`Token expirado en página ${page}, renovando...`);
-            cachedToken = null;
-            cachedTokenExpiry = 0;
-            token = await getSiigoToken();
-            
-            const retryData = await fetchPageWithRetry(page, year, pageSize, token, additionalFilters);
-            pagesFetched++;
-            
-            const retryPurchases = extractPurchases(retryData);
-            allPurchases.push(...retryPurchases);
-          } else {
-            log.error(`Error crítico en página ${page}:`, error.message);
-            break;
-          }
-        }
-      }
-    }
-
-    // Analizar resultados
-    const analysis = analyzePurchases(allPurchases, year);
-
-    const diagnostics = {
-      filterTests,
-      analysis,
-      apiEndpoint: `${SIIGO_BASE}/purchases`,
-      requestedFilters: {
-        year,
-        start_date: `${year}-01-01`,
-        end_date: `${year}-12-31`,
-        ...additionalFilters
-      },
-      recommendations: [] as string[]
-    };
-
-    // Generar recomendaciones
-    if (analysis.issues.missingDates > 0) {
-      diagnostics.recommendations.push(`${analysis.issues.missingDates} facturas sin fecha válida - revisar campos de fecha`);
-    }
-    
-    if (analysis.issues.wrongYear > 0) {
-      diagnostics.recommendations.push(`${analysis.issues.wrongYear} facturas de años diferentes encontradas`);
-    }
-
-    const emptyMonths = Object.entries(analysis.monthlyBreakdown).filter(([_, count]) => count === 0);
-    if (emptyMonths.length > 0) {
-      diagnostics.recommendations.push(`Meses sin facturas: ${emptyMonths.map(([month]) => month).join(', ')}`);
-    }
-
-    // Sugerir filtros alternativos si hay pocos resultados
-    if (totalFromAPI < 100) {
-      diagnostics.recommendations.push('Pocos resultados - considera probar sin filtros de fecha o con filtros de estado');
-    }
-
-    log.info(`=== ANÁLISIS COMPLETADO ===`);
-    log.info(`- Facturas obtenidas: ${allPurchases.length}`);
-    log.info(`- Meses con datos: ${Object.values(analysis.monthlyBreakdown).filter(count => count > 0).length}/12`);
-    log.info(`- Estados encontrados: ${Object.keys(analysis.statusBreakdown).join(', ')}`);
-
-    return {
-      purchases: allPurchases,
-      pagesFetched,
-      totalFromAPI,
-      diagnostics
-    };
-
-  } catch (error: any) {
-    log.error('Error fatal obteniendo compras:', error.message);
-    throw error;
-  }
-}
-
-function getCacheKey(year: number, pageSize: number, filters: any = {}): string {
+function getCacheKey(year: number, pageSize: number, filters: Record<string, unknown> = {}): string {
   const filtersStr = Object.keys(filters).length > 0 ? JSON.stringify(filters) : '';
   return `purchases_${year}_${pageSize}_${filtersStr}`;
+}
+
+async function fetchAllPurchasesWithDiagnostics(
+  year: number, 
+  pageSize: number = 100, 
+  additionalFilters: PurchaseFilters = {}
+): Promise<PurchaseDiagnostics> {
+  const token = await getSiigoToken();
+  let allPurchases: Purchase[] = [];
+  let totalPages = 1;
+  let totalFromAPI = 0;
+  
+  // Intento obtener datos de la caché primero
+  const cacheKey = getCacheKey(year, pageSize, additionalFilters);
+  const cachedData = purchasesCache.get(cacheKey);
+  
+  if (cachedData && (Date.now() - cachedData.ts < CACHE_TTL_MS)) {
+    log.info(`Usando datos en caché para ${cacheKey}`);
+    return {
+      purchases: cachedData.data,
+      pagesFetched: cachedData.pagesFetched,
+      totalFromAPI: cachedData.totalFromAPI,
+      diagnostics: {
+        monthlyBreakdown: cachedData.monthlyBreakdown,
+        statusBreakdown: cachedData.statusBreakdown,
+        ...cachedData.diagnostics
+      }
+    };
+  }
+  
+  // Si no hay caché o está expirada, obtener datos de la API
+  log.info(`Obteniendo compras para el año ${year} con filtros:`, additionalFilters);
+  
+  try {
+    // Obtener la primera página para saber el total de páginas
+    const firstPage = await fetchPageWithRetry(1, year, pageSize, token, additionalFilters);
+    totalPages = firstPage.pagination?.page || 1;
+    totalFromAPI = firstPage.pagination?.total || 0;
+    
+    // Procesar la primera página
+    const firstPagePurchases = extractPurchases(firstPage);
+    allPurchases = [...firstPagePurchases];
+    
+    // Obtener las páginas restantes en paralelo
+    const pagePromises: Array<Promise<SiigoResponse<Purchase>>> = [];
+    
+    for (let page = 2; page <= totalPages; page++) {
+      pagePromises.push(fetchPageWithRetry(page, year, pageSize, token, additionalFilters));
+    }
+    
+    const pages = await Promise.all(pagePromises);
+    
+    // Procesar las páginas restantes
+    pages.forEach((page) => {
+      const pagePurchases = extractPurchases(page);
+      allPurchases = [...allPurchases, ...pagePurchases];
+    });
+    
+    // Realizar análisis de las compras
+    const analysis = analyzePurchases(allPurchases, year);
+    
+    // Generar recomendaciones
+    const recommendations: string[] = [];
+    if (analysis.issues.missingDates > 0) {
+      recommendations.push(`Advertencia: ${analysis.issues.missingDates} compras sin fecha válida`);
+    }
+    if (analysis.issues.wrongYear > 0) {
+      recommendations.push(`Advertencia: ${analysis.issues.wrongYear} compras no son del año ${year}`);
+    }
+    
+    // Crear entrada de caché
+    const cacheEntry: CacheEntry = {
+      ts: Date.now(),
+      data: allPurchases,
+      pagesFetched: totalPages,
+      totalFromAPI,
+      monthlyBreakdown: analysis.monthlyBreakdown,
+      statusBreakdown: analysis.statusBreakdown,
+      diagnostics: {
+        analysis,
+        recommendations
+      }
+    };
+    
+    // Actualizar caché
+    purchasesCache.set(cacheKey, cacheEntry);
+    
+    // Devolver resultados con diagnósticos
+    return {
+      purchases: allPurchases,
+      pagesFetched: totalPages,
+      totalFromAPI,
+      diagnostics: {
+        analysis,
+        recommendations,
+        testResults: [],
+        requestedFilters: additionalFilters,
+        apiEndpoint: `${SIIGO_BASE}/purchases`,
+        monthlyBreakdown: analysis.monthlyBreakdown,
+        statusBreakdown: analysis.statusBreakdown,
+        dateRanges: {
+          min: analysis.dateRanges.min ? new Date(analysis.dateRanges.min) : undefined,
+          max: analysis.dateRanges.max ? new Date(analysis.dateRanges.max) : undefined
+        },
+        sampleInvoices: analysis.sampleInvoices as Partial<Purchase>[],
+        issues: {
+          missingDates: analysis.issues.missingDates,
+          wrongYear: analysis.issues.wrongYear,
+          totalAnalyzed: analysis.issues.totalAnalyzed
+        }
+      }
+    };
+    
+  } catch (error) {
+    const err = error as Error;
+    log.error('Error en fetchAllPurchasesWithDiagnostics:', err.message);
+    throw error;
+  }
 }
 
 export async function GET(request: Request) {
@@ -505,9 +674,11 @@ export async function GET(request: Request) {
     const diagnose = url.searchParams.get('diagnose') === 'true';
     
     // Filtros adicionales para pruebas
-    const additionalFilters: any = {};
-    if (url.searchParams.get('status')) additionalFilters.status = url.searchParams.get('status');
-    if (url.searchParams.get('type')) additionalFilters.type = url.searchParams.get('type');
+    const additionalFilters: PurchaseFilters = {};
+    const status = url.searchParams.get('status');
+    const type = url.searchParams.get('type');
+    if (status) additionalFilters.status = status;
+    if (type) additionalFilters.type = type;
 
     if (year < 2020 || year > 2030) {
       return NextResponse.json(
@@ -524,7 +695,7 @@ export async function GET(request: Request) {
     if (!forceRefresh && !diagnose && cached && (Date.now() - cached.ts) < CACHE_DURATION_MS) {
       log.info(`CACHE HIT - Devolviendo ${cached.data.length} compras del cache`);
       
-      const response: any = {
+      const response: ApiResponse = {
         success: true,
         purchases: cached.data,
         count: cached.data.length,
@@ -555,7 +726,7 @@ export async function GET(request: Request) {
     };
     purchasesCache.set(cacheKey, cacheEntry);
 
-    const response: any = {
+    const response: ApiResponse = {
       success: true,
       purchases: result.purchases,
       count: result.purchases.length,
@@ -568,25 +739,30 @@ export async function GET(request: Request) {
 
     if (debug || diagnose) {
       response.diagnostics = result.diagnostics;
-    }
-
-    if (diagnose) {
-      response.monthlyBreakdown = result.diagnostics.analysis.monthlyBreakdown;
-      response.statusBreakdown = result.diagnostics.analysis.statusBreakdown;
-      response.recommendations = result.diagnostics.recommendations;
+      
+      if (diagnose && result.diagnostics) {
+        const diagnostics = result.diagnostics as Record<string, unknown>;
+        if (diagnostics.analysis) {
+          const analysis = diagnostics.analysis as Record<string, unknown>;
+          response.monthlyBreakdown = analysis.monthlyBreakdown as Record<string, number>;
+          response.statusBreakdown = analysis.statusBreakdown as Record<string, number>;
+          response.analysis = analysis;
+        }
+        response.recommendations = (diagnostics.recommendations || []) as string[];
+      }
     }
 
     log.info(`Respuesta enviada: ${result.purchases.length}/${result.totalFromAPI} compras`);
 
     return NextResponse.json(response);
 
-  } catch (error: any) {
-    log.error('Error en GET handler:', error);
-    
+  } catch (err) {
+    const error = err as Error;
+    log.error('Error en GET handler:', error.message);
     return NextResponse.json(
       { 
         success: false,
-        error: error.message || 'Error interno del servidor',
+        error: error.message,
         processingTimeMs: Date.now() - startTime
       },
       { status: 500 }

@@ -1,7 +1,14 @@
-import type { FormData, SiigoResponse } from "../../../types/siigo"
+import type { FormData } from "../../../types/siigo"
+
+interface ApiResponse<T = unknown> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  message?: string;
+}
 
 // Función principal para enviar factura a Siigo usando API routes
-export async function enviarFacturaASiigo(datosFormulario: FormData): Promise<SiigoResponse> {
+export async function enviarFacturaASiigo(datosFormulario: FormData): Promise<ApiResponse> {
   try {
     console.log('🚀 Iniciando envío de factura a Siigo...');
     
@@ -44,13 +51,11 @@ export async function enviarFacturaASiigo(datosFormulario: FormData): Promise<Si
 }
 
 // Función de prueba con datos de ejemplo
-export async function pruebaEnvioFactura(): Promise<SiigoResponse> {
+export async function pruebaEnvioFactura(): Promise<ApiResponse> {
   const datosEjemplo: FormData = {
     selectedProvider: {
-      codigo: 'PROV001',
-      nombre: 'Proveedor de Prueba',
       identification: '12345678',
-      name: 'Proveedor de Prueba'
+      branch_office: 0
     },
     items: [
       {
@@ -66,6 +71,7 @@ export async function pruebaEnvioFactura(): Promise<SiigoResponse> {
     ],
     sedeEnvio: 'Bodega Principal',
     hasIVA: true,
+    invoiceDate: new Date().toISOString().split('T')[0],
     ivaPercentage: 19,
     observations: 'Factura de prueba desde API'
   };

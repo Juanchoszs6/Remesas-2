@@ -38,13 +38,30 @@ export async function POST(request: Request) {
         // Extract date from the first row (assuming first column contains dates)
         let fileDate = new Date();
         if (jsonData.length > 0) {
-          const firstRow = jsonData[0] as Record<string, any>;
-          const dateString = Object.values(firstRow)[0];
+          const firstRow = jsonData[0] as Record<string, unknown>;
+          const dateValue = Object.values(firstRow)[0];
           
-          if (dateString) {
-            const parsedDate = new Date(dateString);
-            if (!isNaN(parsedDate.getTime())) {
-              fileDate = parsedDate;
+          if (dateValue) {
+            try {
+              // Handle Excel date numbers (serial dates)
+              if (typeof dateValue === 'number') {
+                // Convert Excel date number to JavaScript Date
+                const excelEpoch = new Date(1899, 11, 30);
+                const jsDate = new Date(excelEpoch.getTime() + (dateValue * 24 * 60 * 60 * 1000));
+                if (!isNaN(jsDate.getTime())) {
+                  fileDate = jsDate;
+                }
+              } else {
+                // Handle string dates
+                const dateString = String(dateValue);
+                const parsedDate = new Date(dateString);
+                if (!isNaN(parsedDate.getTime())) {
+                  fileDate = parsedDate;
+                }
+              }
+            } catch (e) {
+              console.warn('Error parsing date:', e);
+              // Fall back to current date if parsing fails
             }
           }
         }

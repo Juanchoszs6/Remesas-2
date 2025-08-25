@@ -53,7 +53,7 @@ const detectDocumentType = (comprobante: string): 'FC' | 'ND' | 'DS' | 'RP' | nu
 };
 
 // Función para parsear fechas en formato DD/MM/YYYY
-const parseSiigoDate = (dateValue: any): Date | null => {
+const parseSiigoDate = (dateValue: string | number | boolean | Date | null | undefined): Date | null => {
   if (!dateValue) return null;
   
   try {
@@ -93,7 +93,7 @@ const parseSiigoDate = (dateValue: any): Date | null => {
 };
 
 // Función para parsear valores monetarios
-const parseValue = (valueInput: any): number => {
+const parseValue = (valueInput: string | number | boolean | Date): number => {
   if (typeof valueInput === 'number') {
     return Math.abs(valueInput);
   }
@@ -136,7 +136,7 @@ export async function processExcelToJson(file: File): Promise<ProcessedSiigoData
   const worksheet = workbook.Sheets[firstSheetName];
   
   // Convertir a array de arrays
-  const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, {
+  const jsonData = XLSX.utils.sheet_to_json<Array<string | number | boolean | Date>>(worksheet, {
     header: 1,
     defval: '',
     blankrows: false,
@@ -154,8 +154,12 @@ export async function processExcelToJson(file: File): Promise<ProcessedSiigoData
   const requiredHeaders = ['factura proveedor', 'fecha elaboracion', 'valor'];
   
   for (let i = 0; i < Math.min(10, jsonData.length); i++) {
-    const row = jsonData[i] || [];
-    const normalizedRow = row.map((cell: any) => normalizeText(String(cell || '')));
+    const row = (jsonData[i] as Array<string | number | boolean | Date>) || [];
+    const normalizedRow = row.map(cell => {
+      // Handle boolean values explicitly to avoid 'false' being converted to 'false' string
+      const value = cell === true ? 'true' : cell === false ? 'false' : String(cell || '');
+      return normalizeText(value);
+    });
     
     const hasRequiredHeaders = requiredHeaders.every(required => 
       normalizedRow.some(header => header.includes(required))
@@ -208,12 +212,14 @@ export async function processExcelToJson(file: File): Promise<ProcessedSiigoData
     
     try {
       // Extraer datos
-      const factura = String(row[facturaIndex] || '').trim();
-      const fecha = parseSiigoDate(row[fechaIndex]);
-      const valor = parseValue(row[valorIndex]);
-      const proveedor = String(row[proveedorIndex] || '').trim();
-      const identificacion = String(row[identificacionIndex] || '').trim();
-      const moneda = String(row[monedaIndex] || 'COP').trim();
+      const factura = String(row[facturaIndex] ?? '').trim();
+      const fechaValue = row[fechaIndex];
+      const fecha = fechaValue instanceof Date ? fechaValue : parseSiigoDate(String(fechaValue ?? ''));
+      const valorValue = row[valorIndex];
+      const valor = typeof valorValue === 'number' ? valorValue : parseValue(String(valorValue ?? '0'));
+      const proveedor = String(row[proveedorIndex] ?? '').trim();
+      const identificacion = String(row[identificacionIndex] ?? '').trim();
+      const moneda = String(row[monedaIndex] ?? 'COP').trim();
       
       // Validaciones
       if (!factura || !fecha || valor <= 0) {

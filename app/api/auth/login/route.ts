@@ -53,12 +53,12 @@ export async function POST(request: NextRequest) {
     
     return response;
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Login error:', error);
     
-    if (error.name === 'ZodError') {
+    if (error && typeof error === 'object' && 'name' in error && error.name === 'ZodError' && 'errors' in error) {
       return NextResponse.json(
-        { error: 'Datos de entrada inválidos', details: error.errors },
+        { error: 'Datos de entrada inválidos', details: (error as { errors: unknown }).errors },
         { status: 400 }
       );
     }

@@ -1,4 +1,12 @@
-import { InvoiceItem } from "@/types/siigo";
+// Define the expected response type for the API call
+interface SiigoApiResponse {
+  id: string;
+  number: string;
+  date?: string;
+  status?: string;
+  [key: string]: string | number | boolean | object | null | undefined;
+}
+
 
 interface ImpuestoSiigo {
   id: number;
@@ -70,9 +78,7 @@ export async function crearCompraSiigo(
       fecha_vencimiento: string;
     }>;
   }
-): Promise<any> {
-  const url = "https://api.siigo.com/v1/purchases";
-
+): Promise<SiigoApiResponse> {
   const datosParaEnviar: DatosCompraSiigo = {
     document: {
       id: datosCompra.document_id,
@@ -111,30 +117,49 @@ export async function crearCompraSiigo(
     tax_included: false,
   };
 
+  const apiUrl = "https://api.siigo.com/v1/purchases";
+  
   try {
+    // Log the payload to send to the API
     console.log("Enviando datos a Siigo:", JSON.stringify(datosParaEnviar, null, 2));
-    
-    const response = await fetch(url, {
-      method: "POST",
+
+    // Send the request to the API
+    const response = await fetch(apiUrl, {
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`,
-        "Partner-Id": partnerId,
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        'Partner-Id': partnerId,
       },
-      body: JSON.stringify(datosParaEnviar),
+      body: JSON.stringify(datosParaEnviar as unknown as Record<string, unknown>)
     });
 
+    // Get the response data
     const responseData = await response.json();
-    
+
+    // Check if the response was successful
     if (!response.ok) {
-      console.error("Error en la respuesta de Siigo (detalle completo):", JSON.stringify(responseData, null, 2));
-      // Propagar el error completo al frontend para depuración
-      throw { siigo: responseData, status: response.status };
+      // Get the error data
+      const errorData: { message?: string; [key: string]: unknown } = await response.json().catch(() => ({}));
+
+      // Log the error
+      console.error('Error en la respuesta de Siigo:', {
+        status: response.status,
+        statusText: response.statusText,
+        error: errorData
+      });
+
+      // Throw an error
+      throw new Error(`Error al crear la compra: ${errorData.message || response.statusText}`);
     }
 
+    // Return the response data
     return responseData;
   } catch (error) {
+    // Log the error
     console.error("Error en la petición a la API de Siigo:", error);
+
+    // Throw the error
     throw error;
   }
 }

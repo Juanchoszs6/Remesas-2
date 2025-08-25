@@ -1,5 +1,14 @@
-const { Client } = require('pg');
-require('dotenv').config();
+import pg from 'pg';
+import dotenv from 'dotenv';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const { Client } = pg;
+dotenv.config();
+
+// Get the current file's directory
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 async function createProductosUnderscore() {
   const client = new Client({

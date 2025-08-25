@@ -15,8 +15,8 @@ export async function GET(req: NextRequest) {
 
   let sqlQuery = '';
   let countQuery = '';
-  let values: any[] = [];
-  let countValues: any[] = [];
+  let values: (string | number)[] = [];
+  let countValues: (string | number)[] = [];
 
   if (query.trim() === '') {
     // Sin parámetro de búsqueda → devolver proveedores con paginación

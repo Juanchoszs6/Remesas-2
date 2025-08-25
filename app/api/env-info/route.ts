@@ -6,10 +6,10 @@ interface EndpointTest {
   status: 'OK' | 'ERROR' | 'NOT_TESTED';
   message: string;
   responseTime?: number;
-  data?: any;
+  data?: unknown;
 }
 
-async function testEndpoint(url: string): Promise<{ status: 'OK' | 'ERROR'; message: string; responseTime: number; data?: any }> {
+async function testEndpoint(url: string): Promise<{ status: 'OK' | 'ERROR'; message: string; responseTime: number; data?: unknown }> {
   const startTime = Date.now();
   try {
     const response = await fetch(url, { 

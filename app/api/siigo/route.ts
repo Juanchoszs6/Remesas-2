@@ -63,20 +63,23 @@ export async function GET() {
         ...corsHeaders
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+    const status = (error as { response?: { status?: number } })?.response?.status || 500;
+    const data = (error as { response?: { data?: unknown } })?.response?.data;
     console.error('Error al obtener el token:', {
-      message: error.message,
-      status: error.response?.status,
-      data: error.response?.data,
+      message: errorMessage,
+      status: status,
+      data: data,
     });
     return new NextResponse(
       JSON.stringify({
         error: 'Error al obtener el token',
-        details: error.message,
-        status: error.response?.status || 500,
+        details: errorMessage,
+        status: status,
       }),
       {
-        status: error.response?.status || 500,
+        status: status,
         headers: {
           'Content-Type': 'application/json',
           ...corsHeaders
