@@ -1,5 +1,5 @@
-import LoginForm from '@/components/auth/LoginForm';
+import FormularioLogin from '@/components/autenticacion/login-formulario';
 
-export default function LoginPage() {
-  return <LoginForm />;
+export default function PaginaLogin() {
+  return <FormularioLogin />;
 }

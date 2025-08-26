@@ -1,14 +1,22 @@
+// Importaciones de Next.js y utilidades de autenticación
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth';
 
+/**
+ * Página principal de la aplicación
+ * - Redirige a los usuarios no autenticados a la página de inicio de sesión
+ * - Redirige a los usuarios autenticados al panel de control
+ */
 export default async function Page() {
+  // Obtener el usuario actual de la sesión
   const user = await getCurrentUser();
   
+  // Verificar si el usuario está autenticado
   if (!user) {
-    // Si no hay usuario autenticado, redirigir al login
+    // Redirigir a la página de inicio de sesión si no hay usuario autenticado
     redirect('/login');
   }
   
-  // Si hay usuario autenticado, redirigir al dashboard
-  redirect('/dashboard');
+  // Redirigir al panel de control si el usuario está autenticado
+  redirect('/panel');
 }

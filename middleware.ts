@@ -3,17 +3,17 @@ import type { NextRequest } from 'next/server';
 
 // Protected routes that require authentication
 const protectedRoutes = [
-  '/dashboard',
+  '/panel',
   '/admin',
   '/facturacion',
   '/billing',
-  '/invoice'
+  '/facturas'
 ];
 
 // Auth routes that should redirect if already logged in
 const authRoutes = [
   '/login',
-  '/register'
+  '/registro'
 ];
 
 export function middleware(request: NextRequest) {
@@ -36,7 +36,7 @@ export function middleware(request: NextRequest) {
   const isAuthRoute = authRoutes.some(route => pathname.startsWith(route));
   if (isAuthRoute && isAuthenticated) {
     // Redirect to dashboard or specified redirect URL
-    const redirectUrl = request.nextUrl.searchParams.get('redirect') || '/dashboard';
+    const redirectUrl = request.nextUrl.searchParams.get('redirect') || '/panel';
     return NextResponse.redirect(new URL(redirectUrl, request.url));
   }
 
