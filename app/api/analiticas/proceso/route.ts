@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import * as XLSX from "xlsx"
+import { saveUploadedFile } from "@/lib/db"
 
 /**
  * SISTEMA ROBUSTO DE PROCESAMIENTO DE DOCUMENTOS SIIGO
@@ -995,6 +996,31 @@ export async function POST(request: NextRequest) {
           console.log(
             `[v0] ✅ ${file.name}: ${formatCurrency(fileResult.totalValue || 0)} (${fileResult.processed} filas)`,
           )
+
+          // Guardar en la base de datos
+          try {
+            if (fileResult.documentType && fileResult.totalValue !== undefined) {
+              const monthToSave = fileResult.month || (new Date().getMonth() + 1)
+              const yearToSave = fileResult.year || new Date().getFullYear()
+              
+              console.log(`[v0] 💾 Guardando en BD: Tipo=${fileResult.documentType}, ` +
+                         `Mes=${monthToSave}, Año=${yearToSave}, ` +
+                         `Valor=${fileResult.totalValue}, Filas=${fileResult.processed || 0}`)
+              
+              await saveUploadedFile(
+                1, // TODO: Reemplazar con el ID de usuario real
+                file.name,
+                fileResult.documentType,
+                monthToSave,
+                yearToSave,
+                fileResult.totalValue,
+                fileResult.processed || 0
+              )
+              console.log(`[v0] 📊 Datos guardados en la base de datos para ${file.name}`)
+            }
+          } catch (dbError) {
+            console.error('[v0] ❌ Error al guardar en la base de datos:', dbError)
+          }
         } else {
           console.log(`[v0] ❌ ${file.name}: ${fileResult.error}`)
         }
@@ -1397,9 +1423,11 @@ async function processIndividualFileAdvanced(file: File, _fileNumber: number): P
           const year = rowDate.getFullYear()
 
           // Establecer mes y año del archivo basado en la primera fecha válida
+          // Ajustar el mes para que sea 1-12 en lugar de 0-11
           if (fileMonth === -1) {
-            fileMonth = monthIndex
+            fileMonth = monthIndex + 1 // Ajustar a 1-12
             fileYear = year
+            console.log(`[v0] 📅 Mes/Año detectado: ${fileMonth}/${fileYear} (ajustado de ${monthIndex+1}/${year})`)
           }
 
           totalValue += parseResult.value

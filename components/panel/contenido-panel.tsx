@@ -9,9 +9,8 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { LogOut, User as UserIcon, Mail, Calendar, Shield, FileText, Upload } from 'lucide-react';
 import { toast } from 'sonner';
-import { FileUpload } from '../analiticas/FileUpload';
-import { AnalyticsChart } from '../analiticas/AnalyticsChart';
-import type { DocumentType, TimeRange } from '../analiticas/AnalyticsChart';
+import { FileUpload } from '../analiticas/subir-archivo';
+import { AnalyticsChart, type DocumentType, type TimeRange } from '../analiticas/AnalyticsChart';
 
 interface User {
   email: string;
@@ -26,9 +25,58 @@ interface DashboardContentProps {
 
 export default function DashboardContent({ user }: DashboardContentProps) {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
-  const [documentType, setDocumentType] = useState<'FC' | 'ND' | 'DS' | 'RP'>('FC');
-  const [timeRange, setTimeRange] = useState<'month' | 'quarter' | 'year'>('month');
+  const [documentType, setDocumentType] = useState<DocumentType>('FC');
+  const [timeRange, setTimeRange] = useState<TimeRange>('month');
+  const [totalValue, setTotalValue] = useState<number | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const router = useRouter();
+
+  const handleFileProcessed = (data: {
+    success: boolean;
+    totalValue?: number;
+    documentType: DocumentType;
+    processedRows?: number;
+    timeRange?: TimeRange;
+    shouldRefresh?: boolean;
+  }) => {
+    console.log('Archivo procesado:', data);
+    if (data.success) {
+      // Actualizar el tipo de documento si es diferente
+      if (data.documentType && data.documentType !== documentType) {
+        setDocumentType(data.documentType);
+      }
+      
+      // Actualizar el rango de tiempo si está disponible
+      if (data.timeRange && data.timeRange !== timeRange) {
+        setTimeRange(data.timeRange);
+      }
+      
+      // Actualizar el valor total si está disponible
+      if (typeof data.totalValue === 'number') {
+        setTotalValue(data.totalValue);
+      }
+      
+      // Forzar actualización del gráfico si es necesario
+      if (data.shouldRefresh) {
+        setRefreshKey(prev => prev + 1);
+      }
+      
+      // Mostrar notificación de éxito
+      toast.success(
+        `Archivo procesado correctamente. ${data.processedRows || 0} filas procesadas.`
+      );
+      
+      // Mostrar notificación con el total si está disponible
+      if (data.totalValue) {
+        setTotalValue(data.totalValue);
+        const docTypeName = getDocumentTypeName(data.documentType);
+        toast.success(`${docTypeName} procesadas correctamente. Valor total: $${data.totalValue.toLocaleString()}`);
+      }
+      
+      // Forzar actualización del gráfico
+      setRefreshKey(prev => prev + 1);
+    }
+  };
 
   const getDocumentTypeName = (type: string) => {
     const types: Record<string, string> = {
@@ -40,13 +88,15 @@ export default function DashboardContent({ user }: DashboardContentProps) {
     return types[type] || 'Documentos';
   };
 
-  const getTimeRangeName = (range: string) => {
-    const ranges: Record<string, string> = {
+  const getTimeRangeName = (range: TimeRange) => {
+    const ranges: Record<TimeRange, string> = {
+      'day': 'Diario',
+      'week': 'Semanal',
       'month': 'Mensual',
       'quarter': 'Trimestral',
       'year': 'Anual'
     };
-    return ranges[range] || '';
+    return ranges[range] || range;
   };
 
   const handleLogout = async () => {
@@ -198,39 +248,56 @@ export default function DashboardContent({ user }: DashboardContentProps) {
           </Card>
 
           {/* Tarjeta de Estado del Sistema */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Estado del Sistema</CardTitle>
-              <CardDescription>
-                Información del sistema de autenticación
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600">Estado de Sesión:</span>
-                <Badge variant="default" className="bg-green-100 text-green-800">
-                  Activa
-                </Badge>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600">Tipo de Usuario:</span>
-                <Badge variant="secondary">
-                  Administrador
-                </Badge>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600">Autenticación:</span>
-                <Badge variant="default" className="bg-blue-100 text-blue-800">
-                  Verificada
-                </Badge>
-              </div>
-              <Separator />
-              <p className="text-xs text-gray-500">
-                Tu sesión está protegida y todas las rutas administrativas 
-                requieren autenticación válida.
-              </p>
-            </CardContent>
-          </Card>
+          <div className="grid gap-4">
+            {totalValue !== null && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg font-semibold">Resumen de la Carga</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="rounded-lg border p-4">
+                      <h3 className="text-sm font-medium text-muted-foreground">Valor Total</h3>
+                      <p className="text-2xl font-bold">${totalValue.toLocaleString()}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+            <Card>
+              <CardHeader>
+                <CardTitle>Estado del Sistema</CardTitle>
+                <CardDescription>
+                  Información del sistema de autenticación
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-600">Estado de Sesión:</span>
+                  <Badge variant="default" className="bg-green-100 text-green-800">
+                    Activa
+                  </Badge>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-600">Tipo de Usuario:</span>
+                  <Badge variant="secondary">
+                    Administrador
+                  </Badge>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-600">Autenticación:</span>
+                  <Badge variant="default" className="bg-blue-100 text-blue-800">
+                    Verificada
+                  </Badge>
+                </div>
+                <Separator />
+                <p className="text-xs text-gray-500">
+                  Tu sesión está protegida y todas las rutas administrativas 
+                  requieren autenticación válida.
+                </p>
+              </CardContent>
+            </Card>
+          </div>
         </div>
 
         {/* Sección de Carga de Archivos */}
@@ -250,10 +317,7 @@ export default function DashboardContent({ user }: DashboardContentProps) {
               <FileUpload 
                 documentType={documentType}
                 timeRange={timeRange}
-                onFileProcessed={(data) => {
-                  console.log('Archivo procesado:', data);
-                  toast.success('Archivo procesado correctamente');
-                }}
+                onFileProcessed={handleFileProcessed}
                 onUploadComplete={() => {
                   toast.success('Carga de archivos completada');
                 }}
@@ -289,6 +353,8 @@ export default function DashboardContent({ user }: DashboardContentProps) {
                   value={timeRange}
                   onChange={(e) => setTimeRange(e.target.value as TimeRange)}
                 >
+                  <option value="day">Diario</option>
+                  <option value="week">Semanal</option>
                   <option value="month">Mensual</option>
                   <option value="quarter">Trimestral</option>
                   <option value="year">Anual</option>
@@ -306,12 +372,13 @@ export default function DashboardContent({ user }: DashboardContentProps) {
             </CardHeader>
             <CardContent className="p-0">
               <div className="w-full" style={{ minHeight: '500px' }}>
-                <AnalyticsChart 
-                  title={`${getDocumentTypeName(documentType)} - ${getTimeRangeName(timeRange)}`}
-                  timeRange={timeRange}
-                  documentType={documentType}
-                  className="p-6"
-                />
+                <div key={`${documentType}-${timeRange}-${refreshKey}`} className="w-full">
+                  <AnalyticsChart 
+                    title={`${getDocumentTypeName(documentType)}`}
+                    documentType={documentType}
+                    timeRange={timeRange}
+                  />
+                </div>
               </div>
             </CardContent>
           </Card>

@@ -1,5 +1,5 @@
 // Importaciones de bibliotecas y componentes necesarios
-import { useState, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -16,22 +16,43 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import type { DocumentType } from './AnalyticsChart';
+import { DocumentType, documentTypeNames, documentTypeColors } from '@/types/document.types';
+import type { TimeRange } from './AnalyticsChart';
+
+// Asegurarnos de que JSX esté disponible
+declare global {
+  namespace JSX {
+    interface Element {}
+    interface IntrinsicElements { [key: string]: any; }
+  }
+}
 
 // Interfaz para las propiedades del componente
 interface FileUploadProps {
-  onFileProcessed?: (data: any) => void;  // Callback cuando se procesa un archivo
-  onUploadComplete?: () => void;          // Callback cuando se completa la carga
-  documentType: 'FC' | 'ND' | 'DS' | 'RP';  // Tipo de documento
-  timeRange: 'month' | 'quarter' | 'year';  // Rango de tiempo para el análisis
+  onFileProcessed?: (data: {
+    success: boolean;
+    totalValue?: number;
+    documentType: DocumentType;
+    processedRows?: number;
+    [key: string]: unknown;
+  }) => void;
+  onUploadComplete?: () => void;
+  documentType: DocumentType;
+  timeRange: TimeRange;
 }
 
 interface ProcessedData {
-  [key: string]: unknown;
+  success: boolean;
+  totalValue?: number;
+  processedRows?: number;
+  documentType?: DocumentType;
+  filename?: string;
+  shouldRefresh?: boolean;
   _debug?: {
     processedRows?: number;
     [key: string]: unknown;
   };
+  [key: string]: unknown;
 }
 
 interface UploadedFileData {
@@ -43,30 +64,16 @@ interface UploadedFileData {
   debugInfo?: Record<string, unknown>;
 }
 
-// Colores para los diferentes tipos de documentos
-const documentTypeColors = {
-  'FC': 'bg-blue-100 text-blue-700 border-blue-200',
-  'ND': 'bg-red-100 text-red-700 border-red-200',
-  'DS': 'bg-yellow-100 text-yellow-700 border-yellow-200',
-  'RP': 'bg-green-100 text-green-700 border-green-200',
-  'unknown': 'bg-gray-100 text-gray-700 border-gray-200'
-};
-
-// Nombres de los tipos de documentos
-const documentTypeNames: Record<DocumentType, string> = {
-  'FC': 'Factura de Compra',
-  'ND': 'Nota Débito', 
-  'DS': 'Documento Soporte',
-  'RP': 'Recibo de Pago'
-};
 
 // Componente para la carga de archivos
 export function FileUpload({ onFileProcessed, onUploadComplete, documentType, timeRange }: FileUploadProps) {
+  // Estados para manejar los archivos cargados
+  const [files, setFiles] = useState<UploadedFileData[]>([]);
   // Estados para manejar la carga y el progreso
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [files, setFiles] = useState<UploadedFileData[]>([]);
+  const [fileData, setFileData] = useState<UploadedFileData | null>(null);
 
   // Función para detectar el tipo de documento desde el nombre del archivo
   const detectDocumentType = (filename: string): DocumentType | 'unknown' => {
@@ -115,14 +122,86 @@ export function FileUpload({ onFileProcessed, onUploadComplete, documentType, ti
     // Agregar los archivos al estado
     setFiles(prev => [...prev, ...newFiles]);
 
+    // Procesar los archivos
+    const processFiles = async (filesToProcess: UploadedFileData[]) => {
+      for (const fileData of filesToProcess) {
+        const toastId = toast.loading(`Procesando ${fileData.file.name}...`);
+        
+        try {
+          const formData = new FormData();
+          formData.append('file', fileData.file);
+
+          const response = await fetch('/api/analiticas/proceso', {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (!response.ok) {
+            throw new Error(`Error al subir el archivo: ${response.statusText}`);
+          }
+
+          const result = await response.json();
+          
+          // Actualizar el estado del archivo
+          setFiles(prev => 
+            prev.map(f => 
+              f.file === fileData.file 
+                ? { 
+                    ...f, 
+                    status: 'success' as const, 
+                    data: result.data,
+                    debugInfo: result.debug
+                  } 
+                : f
+            )
+          );
+
+          // Notificar que el archivo se procesó correctamente
+          if (onFileProcessed) {
+            onFileProcessed({
+              success: true,
+              documentType: fileData.type as DocumentType,
+              totalValue: result.data?.totalValue,
+              processedRows: result.data?.processedRows,
+              filename: fileData.file.name,
+              shouldRefresh: true
+            });
+          }
+
+          toast.success(`Archivo ${fileData.file.name} procesado correctamente`, { id: toastId });
+        } catch (error) {
+          console.error('Error procesando archivo:', error);
+          setFiles(prev => 
+            prev.map(f => 
+              f.file === fileData.file 
+                ? { 
+                    ...f, 
+                    status: 'error' as const, 
+                    error: error instanceof Error ? error.message : 'Error desconocido'
+                  } 
+                : f
+            )
+          );
+          toast.error(`Error al procesar ${fileData.file.name}`, { 
+            id: toastId,
+            description: error instanceof Error ? error.message : 'Error desconocido'
+          });
+        }
+      }
+      
+      // Notificar que la carga ha finalizado
+      if (onUploadComplete) {
+        onUploadComplete();
+      }
+    };
+
     try {
-      // Procesar los archivos
       await processFiles(newFiles);
     } catch (error) {
-      console.error('Error procesando archivos Siigo:', error);
-      toast.error('Error procesando archivos de Siigo. Revise los detalles.');
+      console.error('Error procesando archivos:', error);
+      toast.error('Error al procesar los archivos. Por favor, intente nuevamente.');
     }
-  }, []);
+  }, [onFileProcessed, onUploadComplete]);
 
   // Función para procesar los archivos
   const processFiles = async (filesToProcess: UploadedFileData[]) => {
@@ -189,11 +268,16 @@ export function FileUpload({ onFileProcessed, onUploadComplete, documentType, ti
       try {
         const formData = new FormData();
         formData.append('file', fileData.file);
+        formData.append('documentType', documentType);
+        formData.append('timeRange', timeRange);
 
-        console.log('Enviando archivo Siigo a /api/analytics/process');
+        console.log('Enviando archivo Siigo a /api/analiticas/proceso', {
+          documentType,
+          timeRange
+        });
 
         // Verificar si el endpoint existe primero
-        const response = await fetch('/api/analytics/process', {
+        const response = await fetch('/api/analiticas/proceso', {
           method: 'POST',
           body: formData,
         });
@@ -201,33 +285,14 @@ export function FileUpload({ onFileProcessed, onUploadComplete, documentType, ti
         console.log('Respuesta del servidor:', response.status, response.statusText);
 
         if (!response.ok) {
-          let errorMessage = `Error del servidor: ${response.status} ${response.statusText}`;
-
-          try {
-            const errorText = await response.text();
-            console.error('Error del servidor:', errorText);
-
-            if (response.status === 404) {
-              errorMessage = 'Endpoint no encontrado. Verifique que /api/analytics/process/route.ts existe';
-            } else if (response.status === 500) {
-              errorMessage = 'Error interno del servidor. Verifique los logs';
-            }
-          } catch (_e) {
-            console.error('No se pudo leer la respuesta de error');
-          }
-
-          throw new Error(errorMessage);
+          throw new Error(`Error al subir el archivo: ${response.statusText}`);
         }
 
-        let result: unknown;
-        try {
-          result = await response.json();
-          console.log('Respuesta JSON del procesamiento Siigo:', result);
-        } catch (_e) {
-          throw new Error('Respuesta inválida del servidor');
-        }
+        const result = await response.json();
+        console.log('Respuesta JSON del procesamiento Siigo:', result);
 
-        if (!result || typeof result !== 'object' || !('success' in result)) {
+        // Validar la respuesta del servidor
+        if (!result || typeof result !== 'object') {
           throw new Error('Respuesta inválida del servidor');
         }
 
@@ -307,10 +372,19 @@ export function FileUpload({ onFileProcessed, onUploadComplete, documentType, ti
         // Notificar archivo procesado exitosamente
         if (onFileProcessed) {
           onFileProcessed({
-            type: detectedType,
-            file: fileData.file,
-            data: responseData.data
+            success: true,
+            documentType: fileData.type as DocumentType,
+            totalValue: result.data?.totalValue,
+            processedRows: result.data?.processedRows,
+            filename: fileData.file.name,
+            timeRange: timeRange,
+            shouldRefresh: true
           });
+        }
+
+        // Notificar carga completa
+        if (onUploadComplete) {
+          onUploadComplete();
         }
 
         toast.success(
@@ -399,9 +473,16 @@ export function FileUpload({ onFileProcessed, onUploadComplete, documentType, ti
     }
   };
 
-  const successCount = files.filter(f => f.status === 'success').length;
-  const errorCount = files.filter(f => f.status === 'error').length;
-  const uploadingCount = files.filter(f => f.status === 'uploading').length;
+  // Helper function to safely count files by status
+  const countFilesByStatus = (status: UploadedFileData['status']): number => {
+    return files.filter((file): file is UploadedFileData & { status: typeof status } => 
+      file.status === status
+    ).length;
+  };
+
+  const successCount = countFilesByStatus('success');
+  const errorCount = countFilesByStatus('error');
+  const uploadingCount = countFilesByStatus('uploading');
 
   return (
     <div className="space-y-6">
@@ -483,7 +564,7 @@ export function FileUpload({ onFileProcessed, onUploadComplete, documentType, ti
               >
                 <div className="flex items-center space-x-4 min-w-0 flex-1">
                   {/* Icono del archivo */}
-                  <div className={`p-3 rounded-lg border ${documentTypeColors[fileData.type]}`}>
+                  <div className={`p-3 rounded-lg border ${fileData.type in documentTypeColors ? documentTypeColors[fileData.type as DocumentType] : 'bg-gray-100 text-gray-700 border-gray-200'}`}>
                     <FileText className="h-5 w-5" />
                   </div>
 

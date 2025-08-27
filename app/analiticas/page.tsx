@@ -1,12 +1,14 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { FileUpload } from '@/components/analiticas/FileUpload';
+import { FileUpload } from '@/components/analiticas/subir-archivo';
 import { AnalyticsChart } from '@/components/analiticas/AnalyticsChart';
 import type { DocumentType, ProcessedData } from '@/components/analiticas/AnalyticsChart';
 import * as XLSX from 'xlsx';
+import { format } from 'date-fns';
+import { es } from 'date-fns/locale';
 
 const months = [
   'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
@@ -15,15 +17,26 @@ const months = [
 
 type UploadedFilesState = Record<DocumentType | 'unknown', number>;
 
+// Función para formatear números en formato de moneda colombiana
+const formatCurrency = (value: number) => {
+  return new Intl.NumberFormat('es-CO', {
+    style: 'currency',
+    currency: 'COP',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+  }).format(value);
+};
+
 export default function AnalyticsPage() {
-  const [activeTab, setActiveTab] = useState('upload');
+  const [activeTab, setActiveTab] = useState('panel');
   const [documentType, setDocumentType] = useState<DocumentType>('FC');
   const [timeRange, setTimeRange] = useState<'month' | 'quarter' | 'year'>('month');
+  const [isLoading, setIsLoading] = useState(true);
   const [chartData, setChartData] = useState<Record<DocumentType, ProcessedData | undefined>>({
-    FC: undefined,
-    ND: undefined,
-    DS: undefined,
-    RP: undefined
+    FC: { months: [], values: [], total: 0 },
+    ND: { months: [], values: [], total: 0 },
+    DS: { months: [], values: [], total: 0 },
+    RP: { months: [], values: [], total: 0 }
   });
   
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFilesState>({
@@ -33,6 +46,53 @@ export default function AnalyticsPage() {
     RP: 0,
     unknown: 0
   });
+
+  // Cargar datos de la base de datos
+  const fetchData = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      const response = await fetch('/api/analiticas/data');
+      const result = await response.json();
+      
+      if (result.success) {
+        const { data } = result;
+        console.log('Datos recibidos del servidor:', data);
+        
+        // Inicializar el estado con los datos del servidor
+        const updatedChartData = {
+          FC: { months: data.labels, values: [], total: 0 },
+          ND: { months: data.labels, values: [], total: 0 },
+          DS: { months: data.labels, values: [], total: 0 },
+          RP: { months: data.labels, values: [], total: 0 }
+        } as Record<DocumentType, ProcessedData>;
+
+        // Procesar los datasets del backend
+        data.datasets.forEach((dataset: any) => {
+          const docType = dataset.label as DocumentType;
+          if (updatedChartData[docType] !== undefined) {
+            const values = dataset.data.map((val: any) => Number(val) || 0);
+            updatedChartData[docType] = {
+              months: [...data.labels],
+              values: values,
+              total: values.reduce((a: number, b: number) => a + b, 0)
+            };
+          }
+        });
+
+        console.log('Datos procesados para el gráfico:', updatedChartData);
+        setChartData(updatedChartData);
+      }
+    } catch (error) {
+      console.error('Error fetching data:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Cargar datos al montar el componente
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const processExcelFile = useCallback(async (file: File): Promise<void> => {
     return new Promise((resolve, reject) => {
@@ -105,6 +165,55 @@ export default function AnalyticsPage() {
             processedData[docType][month] += value;
           }
           
+          // Configuración del gráfico
+          const chartOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: {
+                position: 'top' as const,
+                labels: {
+                  boxWidth: 12,
+                  padding: 10
+                }
+              },
+              title: {
+                display: true,
+                text: `Análisis de ${documentType} (${timeRange})`,
+                font: {
+                  size: 14
+                }
+              },
+              tooltip: {
+                callbacks: {
+                  label: function(context: any) {
+                    let label = context.dataset.label || '';
+                    if (label) {
+                      label += ': ';
+                    }
+                    if (context.parsed.y !== null) {
+                      label += formatCurrency(context.parsed.y);
+                    }
+                    return label;
+                  }
+                }
+              }
+            },
+            scales: {
+              y: {
+                beginAtZero: true,
+                ticks: {
+                  callback: (value: any) => formatCurrency(Number(value))
+                }
+              },
+              x: {
+                grid: {
+                  display: false
+                }
+              }
+            }
+          };
+
           // Actualizar datos del gráfico
           setChartData({
             FC: {
@@ -146,15 +255,31 @@ export default function AnalyticsPage() {
     });
   }, [setChartData]);
 
-  const handleFileProcessed = (data: any) => {
-    console.log('File processed:', data);
-    if (data?.type && data.type in chartData) {
-      setChartData(prev => ({
+  const handleFileProcessed = (result: { 
+    success: boolean; 
+    documentType: DocumentType; 
+    totalValue?: number; 
+    processedRows?: number; 
+    filename?: string;
+    shouldRefresh?: boolean;
+  }) => {
+    if (result.success) {
+      // Actualizar el contador de archivos subidos
+      setUploadedFiles(prev => ({
         ...prev,
-        [data.type as DocumentType]: data
+        [result.documentType]: (prev[result.documentType] || 0) + 1
       }));
+      
+      // Forzar actualización de datos del gráfico
+      if (result.shouldRefresh) {
+        console.log('Actualizando datos del gráfico...');
+        fetchData().then(() => {
+          console.log('Datos del gráfico actualizados exitosamente');
+        }).catch(error => {
+          console.error('Error al actualizar los datos del gráfico:', error);
+        });
+      }
     }
-    // toast.success('Archivo procesado correctamente');
   };
 
   const handleUploadComplete = () => {
@@ -179,13 +304,16 @@ export default function AnalyticsPage() {
         await processExcelFile(file);
       }
       
+      // Recargar datos después de subir archivos
+      await fetchData();
+      
       // Cambiar a la pestaña del panel después del procesamiento
       setActiveTab('panel');
     } catch (error) {
       console.error('Error processing files:', error);
       alert('Error al procesar los archivos. Por favor, verifica el formato.');
     }
-  }, [processExcelFile, uploadedFiles]);
+  }, [processExcelFile, uploadedFiles, fetchData]);
 
   return (
     <div className="container mx-auto py-8">
@@ -197,16 +325,27 @@ export default function AnalyticsPage() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="upload">Cargar Archivos</TabsTrigger>
-          <TabsTrigger 
-            value="panel" 
-            disabled={Object.values(uploadedFiles).every(count => count === 0)}
-          >
-            Panel
-          </TabsTrigger>
-          <TabsTrigger value="reports" disabled>Reportes</TabsTrigger>
-        </TabsList>
+        <div className="flex justify-between items-center mb-4">
+          <TabsList>
+            <TabsTrigger value="upload">Cargar Archivos</TabsTrigger>
+            <TabsTrigger 
+              value="panel" 
+              disabled={Object.values(uploadedFiles).every(count => count === 0)}
+            >
+              Panel
+            </TabsTrigger>
+            <TabsTrigger value="reports" disabled>Reportes</TabsTrigger>
+          </TabsList>
+          {activeTab === 'panel' && (
+            <button 
+              onClick={fetchData}
+              disabled={isLoading}
+              className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isLoading ? 'Cargando...' : 'Actualizar Datos'}
+            </button>
+          )}
+        </div>
 
         <TabsContent value="upload" className="space-y-4">
           <Card>
@@ -310,69 +449,74 @@ export default function AnalyticsPage() {
 
         <TabsContent value="panel">
           <div className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Análisis de Facturas de Compra (FC)</CardTitle>
-                <CardDescription>
-                  Resumen mensual de facturas de compra
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <AnalyticsChart 
-                  title="Facturas de Compra" 
-                  documentType="FC"
-                  data={chartData.FC}
-                />
-              </CardContent>
-            </Card>
+            <div className="grid gap-6">
+              {/* Resumen de totales */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {Object.entries(chartData).map(([type, data]) => (
+                  <Card key={type} className="border-l-4 border-blue-500">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-lg font-semibold">
+                        {type === 'FC' ? 'Facturas de Compra' : 
+                         type === 'ND' ? 'Notas Débito' :
+                         type === 'DS' ? 'Documentos Soporte' : 'Recibos de Pago'}
+                      </CardTitle>
+                      <CardDescription className="text-2xl font-bold text-blue-600">
+                        {formatCurrency(data?.total || 0)}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-sm text-muted-foreground">
+                        {data?.values?.filter(v => v > 0).length || 0} meses con datos
+                      </p>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Análisis de Notas Débito (ND)</CardTitle>
-                <CardDescription>
-                  Resumen mensual de notas débito
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <AnalyticsChart 
-                  title="Notas Débito" 
-                  documentType="ND"
-                  data={chartData.ND}
-                />
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Análisis de Documentos Soporte (DS)</CardTitle>
-                <CardDescription>
-                  Resumen mensual de documentos soporte
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <AnalyticsChart 
-                  title="Documentos Soporte" 
-                  documentType="DS"
-                  data={chartData.DS}
-                />
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Análisis de Recibos de Pago (RP)</CardTitle>
-                <CardDescription>
-                  Resumen mensual de recibos de pago
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <AnalyticsChart 
-                  title="Recibos de Pago" 
-                  documentType="RP"
-                  data={chartData.RP}
-                />
-              </CardContent>
-            </Card>
+              {/* Gráfico principal */}
+              <Card>
+                <CardHeader>
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <CardTitle>Análisis por Mes</CardTitle>
+                      <CardDescription>
+                        Visualización de datos por tipo de documento
+                      </CardDescription>
+                    </div>
+                    <select
+                      value={documentType}
+                      onChange={(e) => setDocumentType(e.target.value as DocumentType)}
+                      className="px-3 py-2 border rounded-md text-sm"
+                    >
+                      <option value="FC">Facturas de Compra</option>
+                      <option value="ND">Notas Débito</option>
+                      <option value="DS">Documentos Soporte</option>
+                      <option value="RP">Recibos de Pago</option>
+                    </select>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="h-[400px]">
+                    {isLoading ? (
+                      <div className="h-full flex items-center justify-center">
+                        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+                      </div>
+                    ) : (
+                      <AnalyticsChart 
+                        title={
+                          documentType === 'FC' ? 'Facturas de Compra' : 
+                          documentType === 'ND' ? 'Notas Débito' :
+                          documentType === 'DS' ? 'Documentos Soporte' : 'Recibos de Pago'
+                        }
+                        documentType={documentType}
+                        timeRange={timeRange}
+                        data={chartData[documentType]}
+                      />
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           </div>
         </TabsContent>
       </Tabs>

@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Bar } from 'react-chartjs-2';
 import { Button } from '@/components/ui/button';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -16,6 +16,7 @@ import {
   ChartOptions,
   ScriptableContext,
 } from 'chart.js';
+import { toast } from 'sonner';
 
 // registro de componentes de chartjs
 ChartJS.register(
@@ -34,7 +35,7 @@ const MONTHS = [
 ] as const;
 
 // Tipos
-export type TimeRange = 'month' | 'quarter' | 'year';
+export type TimeRange = 'day' | 'week' | 'month' | 'quarter' | 'year';
 export type DocumentType = 'FC' | 'ND' | 'DS' | 'RP';
 
 interface ChartColors {
@@ -43,18 +44,23 @@ interface ChartColors {
   gradient: (context: ScriptableContext<'bar'>) => CanvasGradient | string;
 }
 
-export interface ProcessedData {
-  months?: string[];
-  values?: number[];
-  total?: number;
-  [key: string]: unknown;
+export interface ChartDataResponse {
+  success: boolean;
+  data?: {
+    labels: string[];
+    values: number[];
+    total: string;
+    count: number;
+    documentType: string;
+    timeRange: string;
+  };
+  error?: string;
 }
 
 export interface AnalyticsChartProps {
   title: string;
   documentType: DocumentType;
   timeRange?: TimeRange;
-  data?: ProcessedData;
   className?: string;
 }
 
@@ -121,159 +127,172 @@ const CHART_COLORS: Record<DocumentType, ChartColors> = {
 export function AnalyticsChart({ 
   title, 
   documentType, 
-  data, 
-  timeRange: _timeRange = 'month',
+  timeRange = 'month',
   className = ''
 }: AnalyticsChartProps) {
+  const [chartData, setChartData] = useState<{
+    labels: string[];
+    values: number[];
+    total: string;
+  }>({ labels: [], values: [], total: '0' });
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchChartData = async () => {
+      setIsLoading(true);
+      setError(null);
+      
+      try {
+        const response = await fetch(
+          `/api/analiticas/chart-data?documentType=${documentType}&timeRange=${timeRange}`
+        );
+        
+        if (!response.ok) {
+          throw new Error('Error al cargar los datos del gráfico');
+        }
+        
+        const result: ChartDataResponse = await response.json();
+        
+        if (result.success && result.data) {
+          setChartData({
+            labels: result.data.labels,
+            values: result.data.values,
+            total: result.data.total
+          });
+        } else {
+          throw new Error(result.error || 'Error desconocido al cargar los datos');
+        }
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'Error desconocido';
+        setError(errorMessage);
+        toast.error(`Error: ${errorMessage}`);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchChartData();
+  }, [documentType, timeRange]);
   const currentYear = useMemo(() => new Date().getFullYear(), []);
-  const [selectedYear, setSelectedYear] = useState<number>(currentYear);
   const colors = CHART_COLORS[documentType];
   
-  //Acceda de forma segura a los valores con alternativas
-  const chartValues = useMemo(() => data?.values || Array(12).fill(0), [data?.values]);
-  const chartMonths = useMemo(() => data?.months || [...MONTHS], [data?.months]);
-  const chartTotal = useMemo(() => 
-    data?.total !== undefined ? data.total : chartValues.reduce((sum, val) => sum + val, 0),
-    [data?.total, chartValues]
-  );
-  
-  // Memorice los datos del gráfico para evitar repeticiones de renderizaciones innecesarias
-  const chartData = useMemo<ChartData<'bar', number[], string>>(() => ({
-    labels: chartMonths,
-    datasets: [{
-      label: title,
-      data: chartValues,
-      backgroundColor: colors.gradient,
-      borderColor: colors.border,
-      borderWidth: 1,
-      borderRadius: 4,
-      borderSkipped: false,
-    }],
-  }), [chartMonths, chartValues, title, colors]);
+  const chartValues = useMemo(() => chartData.values || Array(12).fill(0), [chartData.values]);
+  const chartMonths = useMemo(() => chartData.labels || [...MONTHS], [chartData.labels]);
+  const total = useMemo(() => {
+    return parseFloat(chartData.total) || 0;
+  }, [chartData.total]);
 
-  const chartOptions = useMemo<ChartOptions<'bar'>>(() => ({
-    responsive: true,
-    maintainAspectRatio: false,
-    animation: {
-      duration: 800,
-      easing: 'easeInOutQuart' as const
-    },
-    layout: {
-      padding: {
-        top: 30,
-        right: 10,
-        bottom: 40,  // Ajuste de boton pading :)
-        left: 10
-      }
-    },
-    plugins: {
-      legend: { display: false },
-      tooltip: {
-        backgroundColor: 'rgba(0, 0, 0, 0.8)',
-        titleFont: { size: 14, weight: 600 },
-        bodyFont: { size: 13, weight: 500 },
-        padding: 12,
-        cornerRadius: 8,
-        callbacks: {
-          title: (items) => items[0].label,
-          label: (context) => `Total: $${context.parsed.y.toLocaleString()}`,
-          labelColor: () => ({
-            borderColor: 'transparent',
-            backgroundColor: colors.border,
-            borderRadius: 4,
-          }),
-        },
+  const chartDataConfig: ChartData<'bar'> = useMemo(() => ({
+    labels: chartData.labels,
+    datasets: [
+      {
+        label: 'Total',
+        data: chartData.values,
+        backgroundColor: CHART_COLORS[documentType].gradient,
+        borderColor: CHART_COLORS[documentType].border,
+        borderWidth: 1,
+        borderRadius: 4,
+        borderSkipped: false,
       },
-    },
-    scales: {
-      y: {
-        beginAtZero: true,
-        grid: { color: 'rgba(0, 0, 0, 0.05)', drawBorder: false },
-        ticks: {
-          color: 'rgba(0, 0, 0, 0.6)',
-          font: { size: 12 },
-          callback: (value) => `$${Number(value).toLocaleString()}`,
-          padding: 10,
-        },
-      },
-      x: {
-        grid: { display: false, drawBorder: false },
-        ticks: {
-          color: 'rgba(0, 0, 0, 0.7)',
-          font: { size: 12, weight: 500 },
-          maxRotation: 0,
-          autoSkip: false,
-          padding: 10,
-          callback: (value: number | string, index: number, _values) => {
-            // Obtener el nombre completo del mesObtener el nombre completo del mes de las etiquetas del gráfico de las etiquetas del gráfico
-            const monthName = chartMonths[index] || '';
-            // retronar las 3 primeras letras del nombre del mes 
-            return monthName.substring(0, 3);
-          }
-        },
-      },
-    },
-  }), [colors.border]);
+    ],
+  }), [chartData, documentType]);
 
-  const handleYearChange = (increment: number) => {
-    setSelectedYear(prev => {
-      const newYear = prev + increment;
-      return newYear >= 2024 && newYear <= currentYear ? newYear : prev;
-    });
-  };
+  if (isLoading) {
+    return (
+      <div className={`p-4 bg-white rounded-lg shadow flex items-center justify-center h-80 ${className}`}>
+        <div className="flex flex-col items-center">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-500 mb-2" />
+          <p className="text-sm text-gray-500">Cargando datos...</p>
+        </div>
+      </div>
+    );
+  }
 
-  const handlePreviousYear = () => handleYearChange(-1);
-  const handleNextYear = () => handleYearChange(1);
+  if (error) {
+    return (
+      <div className={`p-4 bg-white rounded-lg shadow ${className}`}>
+        <div className="text-center py-8">
+          <p className="text-red-500 mb-2">Error al cargar los datos</p>
+          <p className="text-sm text-gray-500">{error}</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className={`space-y-4 ${className}`}>
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-medium">{title} - {selectedYear}</h3>
-        <div className="flex items-center space-x-2">
-          <Button 
-            variant="outline" 
-            size="icon" 
-            onClick={handlePreviousYear}
-            disabled={selectedYear <= 2024}
-            className="h-8 w-8"
-            aria-label="Previous year"
+    <div className={`p-4 bg-white rounded-lg shadow ${className}`}>
+      <div className="flex justify-between items-center mb-4">
+        <div>
+          <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
+          <p className="text-sm text-gray-500">
+            Total: ${total.toLocaleString('es-CO', { style: 'decimal' })}
+          </p>
+        </div>
+        <div className="flex space-x-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {}}
+            disabled={true}
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
-          <span className="w-16 text-center font-medium">{selectedYear}</span>
-          <Button 
-            variant="outline" 
-            size="icon" 
-            onClick={handleNextYear}
-            disabled={selectedYear >= currentYear}
-            className="h-8 w-8"
-            aria-label="Next year"
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {}}
+            disabled={true}
           >
             <ChevronRight className="h-4 w-4" />
           </Button>
         </div>
       </div>
-      
-      <div className="relative h-[450px] w-full bg-white rounded-lg p-4 shadow-sm border overflow-hidden">
-        {/* Removed duplicate month labels from background */}
-        <div className="absolute inset-0 flex items-end justify-center pointer-events-none">
-          <div className="w-full h-full grid grid-cols-12 gap-0">
-            {MONTHS.map((month) => (
-              <div 
-                key={month}
-                className="h-full border-r border-gray-100"
-                aria-hidden="true"
-              />
-            ))}
-          </div>
-        </div>
-        <div className="relative h-full w-full">
-          <Bar 
-            options={chartOptions} 
-            data={chartData} 
-            aria-label={`${title} chart for ${selectedYear}`}
+      <div className="h-64">
+        {chartData.labels.length > 0 ? (
+          <Bar
+            data={chartDataConfig}
+            options={{
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: {
+                  display: false,
+                },
+                tooltip: {
+                  callbacks: {
+                    label: (context) => {
+                      const value = context.parsed.y;
+                      return `$${value.toLocaleString('es-CO', { minimumFractionDigits: 2 })}`;
+                    },
+                  },
+                },
+              },
+              scales: {
+                x: {
+                  grid: {
+                    display: false,
+                  },
+                },
+                y: {
+                  beginAtZero: true,
+                  ticks: {
+                    callback: (value) => {
+                      if (typeof value === 'number') {
+                        return `$${value.toLocaleString('es-CO', { maximumFractionDigits: 0 })}`;
+                      }
+                      return value;
+                    },
+                  },
+                },
+              },
+            }}
           />
-        </div>
+        ) : (
+          <div className="h-full flex items-center justify-center text-gray-500">
+            No hay datos disponibles para el rango seleccionado
+          </div>
+        )}
       </div>
       
       <div className="text-right">
