@@ -107,20 +107,60 @@ export function FileUpload({ onFileProcessed, onUploadComplete, documentType, ti
     return 'unknown';
   };
 
+  // Función para calcular el hash del contenido del archivo
+  const calculateFileHash = async (file: File): Promise<string> => {
+    const buffer = await file.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+
   // Función que se ejecuta cuando se sueltan archivos en la zona de carga
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     // No hacer nada si no hay archivos
     if (acceptedFiles.length === 0) return;
 
-    // Crear un arreglo con la información de los archivos
-    const newFiles: UploadedFileData[] = acceptedFiles.map(file => ({
-      file,
-      type: detectDocumentType(file.name),
-      status: 'uploading' as const,
-    }));
+    // Filtrar archivos duplicados por nombre y contenido
+    const existingFilenames = new Set(files.map(f => f.file.name));
+    
+    // Procesar archivos para verificar duplicados
+    const filesToProcess: UploadedFileData[] = [];
+    
+    for (const file of acceptedFiles) {
+      // Verificar por nombre
+      if (existingFilenames.has(file.name)) {
+        toast.warning(`El archivo "${file.name}" ya está en la lista de carga.`);
+        continue;
+      }
+      
+      // Calcular hash del archivo
+      try {
+        const fileHash = await calculateFileHash(file);
+        const isDuplicate = files.some(f => f.debugInfo?.fileHash === fileHash);
+        
+        if (isDuplicate) {
+          toast.warning(`El archivo "${file.name}" tiene el mismo contenido que un archivo ya cargado.`);
+          continue;
+        }
+        
+        filesToProcess.push({
+          file,
+          type: detectDocumentType(file.name),
+          status: 'uploading' as const,
+          debugInfo: { fileHash }
+        });
+        
+        existingFilenames.add(file.name);
+      } catch (error) {
+        console.error('Error procesando archivo:', error);
+        toast.error(`Error al procesar el archivo "${file.name}"`);
+      }
+    }
+    
+    if (filesToProcess.length === 0) return;
 
     // Agregar los archivos al estado
-    setFiles(prev => [...prev, ...newFiles]);
+    setFiles(prev => [...prev, ...filesToProcess]);
 
     // Procesar los archivos
     const processFiles = async (filesToProcess: UploadedFileData[]) => {
@@ -419,15 +459,20 @@ export function FileUpload({ onFileProcessed, onUploadComplete, documentType, ti
 
   // Configuración de la zona de arrastrar y soltar
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,  // Función que maneja la carga de archivos
-    // Tipos de archivo aceptados
+    onDrop,  
     accept: {
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
       'application/vnd.ms-excel': ['.xls'],
       'text/csv': ['.csv']
     },
-    maxFiles: 1,  // Solo se permite un archivo a la vez
-    disabled: isUploading  // Deshabilitar durante la carga
+    multiple: true, 
+    onDropRejected: (fileRejections) => {
+      const errorMessages = fileRejections.map(({ file, errors }) => {
+        const errorMessage = errors.map(e => e.message).join(', ');
+        return `Error en ${file.name}: ${errorMessage}`;
+      });
+      toast.error(errorMessages.join('\n'));
+    }
   });
 
   // Función para obtener el nombre del tipo de documento

@@ -26,30 +26,34 @@ type ResultadoConsulta = FilaBaseDatos[];
 
 export async function GET() {
   try {
-    // Obtener datos de la base de datos para el año actual (2025)
+    // Obtener datos de la base de datos para el año 2025
     const result = await sql`
-      WITH meses_anio AS (
+      WITH meses AS (
+        SELECT generate_series(1, 12) as mes
+      ),
+      documentos_por_mes AS (
         SELECT 
-          generate_series(
-            date_trunc('year', NOW()),
-            date_trunc('year', NOW()) + INTERVAL '1 year' - INTERVAL '1 day',
-            INTERVAL '1 month'
-          ) as fecha
+          uf.month as mes,
+          uf.document_type as tipo_documento,
+          SUM(uf.total_value) as valor_total,
+          COUNT(uf.id) as cantidad
+        FROM uploaded_files uf
+        WHERE uf.year = 2025
+        GROUP BY uf.month, uf.document_type
       )
       SELECT 
-        EXTRACT(MONTH FROM m.fecha)::integer as mes,
-        EXTRACT(YEAR FROM m.fecha)::integer as año,
+        m.mes,
+        2025 as año,
         dt.tipo as tipo_documento,
-        COALESCE(SUM(uf.total_value)::float, 0) as valor_total,
-        COUNT(uf.id) as cantidad
-      FROM meses_anio m
+        COALESCE(SUM(d.valor_total)::float, 0) as valor_total,
+        COALESCE(SUM(d.cantidad)::integer, 0) as cantidad
+      FROM meses m
       CROSS JOIN (SELECT unnest(ARRAY['FC', 'RP', 'ND', 'DS']) as tipo) dt
-      LEFT JOIN uploaded_files uf ON 
-        EXTRACT(MONTH FROM uf.uploaded_at) = EXTRACT(MONTH FROM m.fecha) AND
-        EXTRACT(YEAR FROM uf.uploaded_at) = EXTRACT(YEAR FROM m.fecha) AND
-        uf.document_type = dt.tipo
-      GROUP BY m.fecha, dt.tipo, mes, año
-      ORDER BY año, mes, dt.tipo
+      LEFT JOIN documentos_por_mes d ON 
+        m.mes = d.mes AND
+        dt.tipo = d.tipo_documento
+      GROUP BY m.mes, dt.tipo
+      ORDER BY m.mes, dt.tipo
     ` as unknown as ResultadoConsulta;
 
     // Crear array para el año 2025 (de enero a diciembre)
