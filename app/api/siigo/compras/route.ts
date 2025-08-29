@@ -244,6 +244,9 @@ export async function POST(request: NextRequest) {
     // Calcular total para el pago
     const total = calculateGrandTotal(body.items, body.ivaPercentage || 19);
 
+    // Determinar si algún ítem tiene IVA
+    const hasAnyItemWithIVA = body.items.some(item => item.hasIVA === true);
+
     // Construir payload según documentación exacta de Siigo
     const siigoPayload: SiigoPurchaseRequest = {
       document: {
@@ -257,7 +260,7 @@ export async function POST(request: NextRequest) {
       items: siigoItems,
       payments: [
         {
-          id: 5636,
+          id: 5636, // ID del método de pago en Siigo
           value: Math.round(total * 100) / 100,
           due_date: formatDate(body.invoiceDate)
         }
@@ -272,7 +275,8 @@ export async function POST(request: NextRequest) {
       observations: body.observations,
       discount_type: 'Value',
       supplier_by_item: false,
-      tax_included: false
+      // Solo incluir tax_included si hay al menos un ítem con IVA
+      ...(hasAnyItemWithIVA && { tax_included: true })
     };
 
     // Log del payload (sin información sensible)

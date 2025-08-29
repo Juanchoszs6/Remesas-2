@@ -49,7 +49,7 @@ interface InvoiceState {
   ivaPercentage: number;
   providerCode: string;
   providerIdentification: string;
-  costCenter?: string;
+  costCenter: string;
   cufe?: string;
   currency?: string;
 }
@@ -67,15 +67,16 @@ type InvoiceFormAction =
     }
   | { 
       type: 'UPDATE_FIELD'; 
-      payload: { 
-        field: keyof Omit<InvoiceState, 'provider' | 'items' | 'costCenter' | 'cufe' | 'currency'>; 
-        value: string | number | boolean;
-      } 
+      payload: (
+        | { field: 'invoiceDate' | 'documentId' | 'providerInvoiceNumber' | 'providerInvoicePrefix' | 'observations' | 'providerCode' | 'providerIdentification' | 'cufe'; value: string }
+        | { field: 'costCenter'; value: string }
+        | { field: 'ivaPercentage'; value: number }
+        | { field: 'currency'; value: string | undefined }
+      )
     }
   | { type: 'SET_PROVIDER'; payload: Provider | null }
   | { type: 'SET_DOCUMENT_ID'; payload: string }
   | { type: 'SET_PROVIDER_INVOICE_NUMBER'; payload: string }
-  | { type: 'SET_COST_CENTER'; payload: string }
   | { type: 'SET_CUFE'; payload: string }
   | { type: 'SET_CURRENCY'; payload: string }
   | { type: 'RESET_FORM' };
@@ -124,6 +125,7 @@ const initialState: InvoiceState = {
   documentId: '',
   providerInvoiceNumber: '',
   providerInvoicePrefix: 'FC',
+  costCenter: '0',
   observations: '',
   ivaPercentage: 19,
   providerCode: '',
@@ -156,7 +158,7 @@ const invoiceFormReducer = (state: InvoiceState, action: InvoiceFormAction): Inv
       return {
         ...state,
         [action.payload.field]: action.payload.value
-      };
+      } as InvoiceState;
     case 'SET_PROVIDER':
       return {
         ...state,
@@ -352,7 +354,7 @@ const buildSiigoPayload = useCallback((): SiigoPaymentRequest => {
       }
       // Construir el payload robusto para SIIGO
       const payload = buildSiigoPayload();
-      const response = await fetch('/api/siigo/get-purchases', {
+      const response = await fetch('/api/siigo/compras', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -442,17 +444,38 @@ const buildSiigoPayload = useCallback((): SiigoPaymentRequest => {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="provider-invoice-prefix">Prefijo de Factura</Label>
-                <Input
+                <Label htmlFor="provider-invoice-prefix">Prefijo de Factura *</Label>
+                <select
                   id="provider-invoice-prefix"
-                  placeholder="Prefijo (opcional)"
-                  value={state.providerInvoicePrefix || ''}
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  value={state.providerInvoicePrefix || 'FC'}
                   onChange={(e) =>
                     dispatch({ 
                       type: 'UPDATE_FIELD', 
                       payload: { field: 'providerInvoicePrefix', value: e.target.value } 
                     })
                   }
+                  required
+                >
+                  <option value="FC">FC - Factura de Compra</option>
+                  <option value="ND">ND - Nota Débito</option>
+                  <option value="DS">DS - Documento Soporte</option>
+                  <option value="RP">RP - Recibo de Pago</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="cost-center">Centro de Costo *</Label>
+                <Input
+                  id="cost-center"
+                  type="text"
+                  value={state.costCenter || '0'}
+                  onChange={(e) =>
+                    dispatch({
+                      type: 'UPDATE_FIELD',
+                      payload: { field: 'costCenter', value: e.target.value }
+                    })
+                  }
+                  required
                 />
               </div>
               <div className="space-y-2">
