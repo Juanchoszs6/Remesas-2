@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { LogOut, User as UserIcon, Mail, Calendar, Shield, FileText, Upload } from 'lucide-react';
+import { LogOut, User as UserIcon, Mail, Calendar, Shield, FileText, Upload, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { FileUpload } from '../analiticas/subir-archivo';
 import { AnalyticsChart, type DocumentType, type TimeRange } from '../analiticas/AnalyticsChart';
@@ -243,6 +243,14 @@ export default function DashboardContent({ user }: DashboardContentProps) {
               >
                 <FileText className="h-4 w-4 mr-2" />
                 Formulario SIIGO
+              </Button>
+              <Button 
+                className="w-full justify-start" 
+                variant="outline"
+                onClick={() => router.push('/consultar-facturas')}
+              >
+                <Search className="h-4 w-4 mr-2" />
+                Consultar Facturas
               </Button>
             </CardContent>
           </Card>

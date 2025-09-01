@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
 
   if (!query || query.trim() === '') {
     // Sin parámetro de búsqueda → devolver productos con paginación
-    sqlQuery = `
+    sqlQuery = ` +
       SELECT codigo, nombre, precio_base, tiene_iva 
       FROM productos_ 
       ORDER BY codigo
