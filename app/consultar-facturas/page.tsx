@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { useSiigoAuth } from '@/hooks/useSiigoAuth';
 import {
   Dialog,
   DialogContent,
@@ -16,7 +17,7 @@ import { Label } from '@/components/ui/label';
 import { Calendar as CalendarComponent } from '@/components/ui/calendar';
 import { format, subDays, isSameDay } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { FileText, Search, Loader2, Calendar as CalendarIcon, Eye, Printer } from 'lucide-react';
+import { FileText, Search, Loader2, Calendar as CalendarIcon, Eye, RefreshCw } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import {
@@ -30,23 +31,7 @@ import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, Tabl
 import { Badge } from '@/components/ui/badge';
 import { InvoiceType } from '@/types/invoice';
 
-type LocalInvoiceType = {
-  id: string;
-  name: string;
-  code: string;
-  type: 'FC' | 'ND' | 'DS' | 'RP';
-  description: string;
-  active: boolean;
-  document_support: boolean;
-  cost_center: boolean;
-  cost_center_mandatory: boolean;
-  automatic_number: boolean;
-  consecutive?: number;
-  decimals: boolean;
-  consumption_tax: boolean;
-  reteiva: boolean;
-  reteica: boolean;
-}
+// Using the imported InvoiceType from types
 
 interface Customer {
   id: string;
@@ -129,15 +114,20 @@ export default function ConsultarFacturas() {
 
 // Client component that will be dynamically imported
 function ClientSideConsultarFacturas() {
-  const [date, setDate] = useState<Date | null>(null);
-  const [endDate, setEndDate] = useState<Date | null>(null);
-  const [invoiceTypes, setInvoiceTypes] = useState<InvoiceType[]>([]);
-  const [selectedType, setSelectedType] = useState<string>('all');
-  const [documentTypes, setDocumentTypes] = useState<InvoiceType[]>([]);
+  // Document types with their API endpoints
+  const documentTypes = [
+    { id: 'FC', name: 'Factura de Compra', endpoint: 'invoices' },
+    { id: 'ND', name: 'Nota Débito', endpoint: 'debit-notes' },
+    { id: 'DS', name: 'Documento Soporte', endpoint: 'support-documents' },
+    { id: 'RP', name: 'Recibo de Pago', endpoint: 'payment-receipts' }
+  ];
+
+  const [selectedType, setSelectedType] = useState<string>('FC');
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const { fetchWithAuth, loading: authLoading } = useSiigoAuth();
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [isViewerOpen, setIsViewerOpen] = useState(false);
   const [searchPerformed, setSearchPerformed] = useState(false);
@@ -148,189 +138,380 @@ function ClientSideConsultarFacturas() {
   });
 
   const clearFilters = () => {
-    setDate(null);
-    setEndDate(null);
-    setSelectedType('all');
+    setSelectedType('FC');
     setInvoices([]);
     setSearchPerformed(false);
     setError(null);
-    setFilters({
-      status: '',
-      minAmount: '',
-      maxAmount: ''
-    });
-    // Reset to default document types
-    setDocumentTypes(Object.values(DOCUMENT_TYPES));
   };
 
-  // Document types configuration with all required fields
-  const DOCUMENT_TYPES = {
-    FC: { 
-      id: '1', 
-      name: 'Factura', 
-      code: '1', 
-      type: 'FC', 
-      description: 'Factura de Compra',
-      active: true,
-      document_support: true,
-      cost_center: false,
-      cost_center_mandatory: false,
-      automatic_number: true,
-      consecutive: 1,
-      decimals: true,
-      consumption_tax: true,
-      reteiva: true,
-      reteica: true
-    },
-    ND: { 
-      id: '2', 
-      name: 'Nota Débito', 
-      code: '2', 
-      type: 'ND', 
-      description: 'Nota Débito',
-      active: true,
-      document_support: true,
-      cost_center: false,
-      cost_center_mandatory: false,
-      automatic_number: true,
-      consecutive: 1,
-      decimals: true,
-      consumption_tax: true,
-      reteiva: true,
-      reteica: true
-    },
-    DS: { 
-      id: '3', 
-      name: 'Documento Soporte', 
-      code: '3', 
-      type: 'DS', 
-      description: 'Documento Soporte',
-      active: true,
-      document_support: true,
-      cost_center: false,
-      cost_center_mandatory: false,
-      automatic_number: true,
-      consecutive: 1,
-      decimals: true,
-      consumption_tax: true,
-      reteiva: true,
-      reteica: true
-    },
-    RP: { 
-      id: '4', 
-      name: 'Recibo de Pago', 
-      code: '4', 
-      type: 'RP', 
-      description: 'Recibo de Pago',
-      active: true,
-      document_support: true,
-      cost_center: false,
-      cost_center_mandatory: false,
-      automatic_number: true,
-      consecutive: 1,
-      decimals: true,
-      consumption_tax: true,
-      reteiva: true,
-      reteica: true
-    }
-  };
+  // Function to fetch documents from Siigo API based on selected type
+  const fetchPurchaseInvoices = useCallback(async () => {
+    if (!selectedType) return;
+    
+    try {
+      setLoading(true);
+      setError(null);
+      setSearching(true);
+      
+      const selectedDocType = documentTypes.find(doc => doc.id === selectedType);
+      if (!selectedDocType) {
+        throw new Error('Tipo de documento no válido');
+      }
+      
+      console.log(`Fetching ${selectedDocType.name} from Siigo API...`);
+      
+      // Build query parameters
+      const params = new URLSearchParams({
+        type: selectedType, // This will be used in the API route to determine the document type
+        page: '1',
+        pageSize: '100',
+        includeDependencies: 'true'
+      });
 
-  // Initialize component with default document types
-  useEffect(() => {
-    const today = new Date();
-    setDate(today);
-    setEndDate(today);
-    
-    // Set default document types
-    setDocumentTypes([
-      DOCUMENT_TYPES.FC,
-      DOCUMENT_TYPES.ND,
-      DOCUMENT_TYPES.DS,
-      DOCUMENT_TYPES.RP
-    ]);
-    
-    // Try to fetch from API in the background
-    const fetchDocumentTypes = async () => {
-      try {
-        const response = await fetch('/api/siigo/invoices/types?type=FC,ND,DS,RP');
-        if (response.ok) {
-          const data = await response.json();
-          if (Array.isArray(data) && data.length > 0) {
-            setDocumentTypes(data);
+      // Make the API call to the documents endpoint with the type parameter
+      const endpoint = `/api/siigo/documents?${params.toString()}`;
+      console.log('API Endpoint:', endpoint);
+      
+      const response = await fetch(endpoint);
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('Error response:', errorData);
+        throw new Error(errorData.error || 'Error al cargar las facturas de Siigo');
+      }
+      
+      const result = await response.json();
+      console.log('Invoices API Response:', result);
+      
+      // Process the response
+      if (!result.success) {
+        console.error('API Error:', result.error);
+        throw new Error(result.error || 'Error al procesar la respuesta del servidor');
+      }
+
+      // Get the data from the response
+      const responseData = result.data || result;
+      
+      // Handle different response formats
+      let invoicesData = [];
+      if (Array.isArray(responseData)) {
+        invoicesData = responseData;
+      } else if (responseData.results && Array.isArray(responseData.results)) {
+        invoicesData = responseData.results;
+      } else if (responseData.items && Array.isArray(responseData.items)) {
+        invoicesData = responseData.items;
+      } else if (responseData.data && Array.isArray(responseData.data)) {
+        invoicesData = responseData.data;
+      } else if (typeof responseData === 'object' && responseData !== null) {
+        // If it's an object but not an array, try to extract data from it
+        const dataKeys = Object.keys(responseData);
+        if (dataKeys.length > 0) {
+          // If there's a key that looks like it contains an array, use that
+          const arrayKey = dataKeys.find(key => 
+            Array.isArray(responseData[key]) && 
+            ['invoices', 'documents', 'items', 'results'].includes(key.toLowerCase())
+          );
+          
+          if (arrayKey) {
+            invoicesData = responseData[arrayKey];
+          } else {
+            // If no array found, try to use the first array value
+            const firstArray = Object.values(responseData).find(Array.isArray);
+            if (firstArray) {
+              invoicesData = firstArray;
+            }
           }
         }
-      } catch (error) {
-        console.error('Error fetching document types:', error);
       }
-    };
-    
-    fetchDocumentTypes();
+
+      // Map and transform the data to match our Invoice interface
+      const formattedInvoices = invoicesData.map((invoice: any) => ({
+        id: invoice.id || `inv-${Math.random().toString(36).substr(2, 9)}`,
+        number: invoice.number || 'N/A',
+        date: invoice.date || invoice.created_at || new Date().toISOString(),
+        due_date: invoice.due_date || invoice.expiration_date || '',
+        customer: {
+          id: invoice.customer?.id || '',
+          name: invoice.customer?.name || invoice.customer_name || 'Cliente no especificado',
+          identification: invoice.customer?.identification || invoice.customer_identification || '',
+          email: invoice.customer?.email || invoice.customer_email || '',
+          phone: invoice.customer?.phone || invoice.customer_phone || '',
+          address: invoice.customer?.address || invoice.customer_address || ''
+        },
+        seller: invoice.seller ? {
+          id: invoice.seller.id || '',
+          name: invoice.seller.name || ''
+        } : undefined,
+        type: invoice.type || 'FC',
+        total: parseFloat(invoice.total) || 0,
+        subtotal: parseFloat(invoice.subtotal) || 0,
+        tax: parseFloat(invoice.tax) || 0,
+        discount: parseFloat(invoice.discount) || 0,
+        status: (invoice.status || 'draft').toLowerCase(),
+        created_at: invoice.created_at || new Date().toISOString(),
+        updated_at: invoice.updated_at || null,
+        items: invoice.items?.map((item: any) => ({
+          id: item.id || `item-${Math.random().toString(36).substr(2, 9)}`,
+          code: item.code || item.sku || '',
+          description: item.description || item.name || 'Producto sin descripción',
+          quantity: parseFloat(item.quantity) || 0,
+          price: parseFloat(item.price) || 0,
+          total: parseFloat(item.total) || 0,
+          tax: parseFloat(item.tax) || 0,
+          discount: parseFloat(item.discount) || 0
+        })) || [],
+        payments: invoice.payments?.map((payment: any) => ({
+          id: payment.id || `pay-${Math.random().toString(36).substr(2, 9)}`,
+          method: payment.method || payment.payment_method || 'No especificado',
+          value: parseFloat(payment.value) || 0,
+          due_date: payment.due_date || payment.payment_due_date || '',
+          status: payment.status || 'pending'
+        })) || [],
+        document_type: invoice.document_type ? {
+          id: invoice.document_type.id || '',
+          name: invoice.document_type.name || '',
+          code: invoice.document_type.code || ''
+        } : {
+          id: 'FC',
+          name: 'Factura de Compra',
+          code: 'FC'
+        },
+        currency: invoice.currency ? {
+          code: invoice.currency.code || 'COP',
+          symbol: invoice.currency.symbol || '$'
+        } : { code: 'COP', symbol: '$' },
+        metadata: invoice.metadata || {}
+      }));
+
+      console.log('Formatted invoices:', formattedInvoices);
+      setInvoices(formattedInvoices);
+      setSearchPerformed(true);
+    } catch (err) {
+      console.error('Error fetching invoices:', err);
+      setError('Error al cargar las facturas. Por favor, intente nuevamente.');
+    } finally {
+      setLoading(false);
+      setSearching(false);
+    }
   }, []);
 
-  const handleSearch = async () => {
-    if (!date) {
-      setError('Por favor seleccione una fecha de inicio');
-      return;
-    }
+  // Initialize component with default values and fetch purchase invoices
+  useEffect(() => {
+    // Document types are loaded via the fetchDocumentTypes effect
+    // Fetch purchase invoices from Siigo API
+    fetchPurchaseInvoices();
+  }, []);
 
-    setSearching(true);
-    setError(null);
-    setInvoices([]);
-    setSearchPerformed(true);
-
-    try {
-      const params = new URLSearchParams();
-      
-      // Add date filters
-      if (date) {
-        params.append('start_date', date.toISOString().split('T')[0]);
-      }
-      
-      if (endDate) {
-        params.append('end_date', endDate.toISOString().split('T')[0]);
-      }
-
-      // Make individual API calls for each document type if 'all' is selected
-      let responses = [];
-      
-      if (selectedType === 'all') {
-        // Get all document types and make individual requests
-        const fetchPromises = documentTypes.map(async (type) => {
-          const typeParams = new URLSearchParams(params.toString());
-          typeParams.append('type', type.code); // Changed from document_type to type
-          const response = await fetch(`/api/siigo/invoices/search?${typeParams.toString()}`);
-          if (!response.ok) {
-            throw new Error(`Error al buscar facturas de tipo ${type.code}`);
-          }
-          return response.json();
-        });
-        
-        responses = await Promise.all(fetchPromises);
-      } else {
-        // Single document type request
-        const type = documentTypes.find(t => t.id === selectedType);
-        if (type) {
-          params.append('type', type.code); // Changed from document_type to type
-        }
-        const response = await fetch(`/api/siigo/invoices/search?${params.toString()}`);
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || 'Error al buscar facturas');
-        }
-        responses = [await response.json()];
-      }
-
-      // Flatten the array of responses into a single array of invoices
-      const allInvoices = responses.flat();
-      setInvoices(allInvoices);
-      setSearchPerformed(true);
-      setSearching(false);
-    } catch (error) {
-      console.error('Error fetching invoices:', error);
-      setError('Error al cargar las facturas');
-      setSearching(false);
+  // Helper function to get status text and variant
+  const getStatusInfo = (status: string) => {
+    switch (status) {
+      case 'paid':
+        return { text: 'Pagada', variant: 'default' as const };
+      case 'cancelled':
+        return { text: 'Anulada', variant: 'destructive' as const };
+      case 'draft':
+        return { text: 'Borrador', variant: 'outline' as const };
+      case 'overdue':
+        return { text: 'Vencida', variant: 'destructive' as const };
+      case 'partially_paid':
+        return { text: 'Parcialmente Pagada', variant: 'default' as const };
+      default:
+        return { text: status, variant: 'outline' as const };
     }
   };
+
+  // Function to render the invoices table
+  const renderInvoicesTable = () => {
+    if (loading) {
+      return (
+        <div className="flex justify-center items-center p-8">
+          <Loader2 className="h-8 w-8 animate-spin text-gray-500 mb-4" />
+          <span className="ml-2">Cargando facturas...</span>
+        </div>
+      );
+    }
+
+    return (
+      <div className="mt-6">
+        <div className="flex justify-between items-center mb-4">
+          <div className="text-sm text-muted-foreground">
+            Mostrando {invoices.length} factura(s)
+          </div>
+          <div className="flex space-x-2">
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={fetchPurchaseInvoices}
+              disabled={searching}
+            >
+              {searching ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Actualizando...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Actualizar
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+        
+        <div className="border rounded-md overflow-hidden">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader className="bg-muted/50">
+                <TableRow>
+                  <TableHead className="w-[120px]">Número</TableHead>
+                  <TableHead className="w-[100px]">Fecha</TableHead>
+                  <TableHead className="w-[120px]">Vencimiento</TableHead>
+                  <TableHead>Proveedor</TableHead>
+                  <TableHead className="text-right w-[120px]">Subtotal</TableHead>
+                  <TableHead className="text-right w-[100px]">Impuestos</TableHead>
+                  <TableHead className="text-right w-[100px]">Descuentos</TableHead>
+                  <TableHead className="text-right w-[130px] font-bold">Total</TableHead>
+                  <TableHead className="w-[140px]">Estado</TableHead>
+                  <TableHead className="w-[80px] text-right">Acciones</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {invoices.map((invoice) => {
+                  const statusInfo = getStatusInfo(invoice.status);
+                  return (
+                    <TableRow key={invoice.id} className="hover:bg-muted/50">
+                      <TableCell className="font-medium">
+                        <div className="flex flex-col">
+                          <span className="font-semibold">{invoice.number || 'N/A'}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {invoice.document_type?.name || 'Factura'}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {invoice.date 
+                          ? format(new Date(invoice.date), 'dd/MM/yyyy', { locale: es })
+                          : 'N/A'}
+                      </TableCell>
+                      <TableCell>
+                        {invoice.due_date 
+                          ? format(new Date(invoice.due_date), 'dd/MM/yyyy', { locale: es })
+                          : 'N/A'}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col">
+                          <span className="font-medium">{invoice.customer?.name || 'Sin nombre'}</span>
+                          <div className="flex items-center space-x-2 text-xs text-muted-foreground">
+                            {invoice.customer?.identification && (
+                              <span>{invoice.customer.identification}</span>
+                            )}
+                            {invoice.customer?.email && (
+                              <span>• {invoice.customer.email}</span>
+                            )}
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {new Intl.NumberFormat('es-CO', {
+                          style: 'currency',
+                          currency: invoice.currency?.code || 'COP',
+                        }).format(invoice.subtotal || 0)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {new Intl.NumberFormat('es-CO', {
+                          style: 'currency',
+                          currency: invoice.currency?.code || 'COP',
+                        }).format(invoice.tax || 0)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {invoice.discount 
+                          ? new Intl.NumberFormat('es-CO', {
+                              style: 'currency',
+                              currency: invoice.currency?.code || 'COP',
+                            }).format(invoice.discount || 0)
+                          : '-'}
+                      </TableCell>
+                      <TableCell className="text-right font-semibold">
+                        {new Intl.NumberFormat('es-CO', {
+                          style: 'currency',
+                          currency: invoice.currency?.code || 'COP',
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2
+                        }).format(invoice.total || 0)}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={statusInfo.variant} className="whitespace-nowrap">
+                          {statusInfo.text}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end space-x-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => {
+                              setSelectedInvoice(invoice);
+                              setIsViewerOpen(true);
+                            }}
+                            title="Ver detalles"
+                          >
+                            <Eye className="h-4 w-4" />
+                            <span className="sr-only">Ver detalles</span>
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Function to search invoices with authentication
+  const handleSearch = useCallback(async () => {
+    if (authLoading || !selectedType) return;
+    
+    try {
+      setSearching(true);
+      setError(null);
+      
+      // Build query parameters
+      const params = new URLSearchParams({
+        type: selectedType, // Use the selected document type directly
+        page: '1',
+        pageSize: '100',
+        includeDependencies: 'true'
+      });
+      
+      // Use the documents endpoint with type parameter
+      const endpoint = `/api/siigo/documents`;
+      const response = await fetchWithAuth(`${endpoint}?${params.toString()}`);
+      
+      if (!response.ok) {
+        throw new Error('Error al buscar documentos');
+      }
+      
+      const result = await response.json();
+      
+      if (!result.success) {
+        throw new Error(result.error || 'Error al procesar la respuesta');
+      }
+      
+      setInvoices(Array.isArray(result.data) ? result.data : []);
+      setSearchPerformed(true);
+    } catch (err) {
+      console.error('Error searching documents:', err);
+      setError('Error al buscar documentos. Por favor, intente nuevamente.');
+    } finally {
+      setSearching(false);
+    }
+  }, [authLoading, fetchWithAuth, selectedType]);
 
   const formatCurrency = (value: number, currency: string = 'COP') => {
     const formatter = new Intl.NumberFormat('es-CO', {
@@ -398,75 +579,7 @@ function ClientSideConsultarFacturas() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="startDate">Fecha Inicio</Label>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className={cn(
-                        'w-full justify-start text-left font-normal',
-                        !date && 'text-muted-foreground'
-                      )}
-                    >
-                      <CalendarIcon className="mr-2 h-4 w-4" />
-                      {date ? (
-                        format(date, 'PPP', { locale: es })
-                      ) : (
-                        <span>Selecciona una fecha</span>
-                      )}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0">
-                    <CalendarComponent
-                      selected={date || undefined}
-                      onSelect={(selectedDate) => selectedDate && setDate(selectedDate)}
-                      mode="single"
-                      className="rounded-md border p-3"
-                      showOutsideDays
-                      initialFocus
-                    />
-                  </PopoverContent>
-                </Popover>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="endDate">Fecha Fin (opcional)</Label>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className={cn(
-                        'w-full justify-start text-left font-normal',
-                        !endDate && 'text-muted-foreground'
-                      )}
-                    >
-                      <CalendarIcon className="mr-2 h-4 w-4" />
-                      {endDate ? (
-                        isSameDay(endDate, new Date()) ? 'Hoy' : format(endDate, 'PPP', { locale: es })
-                      ) : (
-                        <span>Selecciona una fecha</span>
-                      )}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0">
-                    <CalendarComponent
-                      mode="single"
-                      selected={endDate || undefined}
-                      onSelect={(date) => date && setEndDate(date)}
-                      className="rounded-md border p-3"
-                      disabled={(day) => {
-                        const disabledBefore = date || new Date();
-                        return day < new Date(disabledBefore.setHours(0, 0, 0, 0));
-                      }}
-                      showOutsideDays
-                    />
-                  </PopoverContent>
-                </Popover>
-              </div>
-            </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
             <div className="space-y-4">
               <div className="space-y-2">
@@ -476,32 +589,20 @@ function ClientSideConsultarFacturas() {
                   onValueChange={setSelectedType}
                   disabled={loading}
                 >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecciona un tipo" />
+                  <SelectTrigger className="w-[250px]">
+                    <SelectValue placeholder="Seleccione un tipo de documento" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">
-                      <div className="flex items-center">
-                        <span className="font-medium">Todos los tipos</span>
-                      </div>
-                    </SelectItem>
                     {documentTypes.map((type) => (
                       <SelectItem key={type.id} value={type.id}>
-                        <div className="flex flex-col">
-                          <span className="font-medium">{type.name} ({type.code})</span>
-                          {type.description && (
-                            <span className="text-xs text-muted-foreground">
-                              {type.description}
-                            </span>
-                          )}
-                        </div>
+                        {type.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
 
-              <div className="flex items-end h-full">
+              <div className="flex items-end">
                 <Button 
                   onClick={handleSearch} 
                   className="w-full" 
@@ -516,16 +617,22 @@ function ClientSideConsultarFacturas() {
                 </Button>
               </div>
             </div>
-
-            <div className="bg-blue-50 p-4 rounded-lg border border-blue-100">
-              <h3 className="font-medium text-blue-800 mb-2">Consejos de búsqueda</h3>
-              <ul className="text-sm text-blue-700 space-y-1">
-                <li>• Selecciona un rango de fechas para buscar facturas en ese período</li>
-                <li>• Deja la fecha fin vacía para buscar solo en la fecha de inicio</li>
-                <li>• Usa el filtro de tipo para buscar por tipo de factura específico</li>
-              </ul>
-            </div>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Invoices Table */}
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle>Facturas de Compra</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4">
+              {error}
+            </div>
+          )}
+          {renderInvoicesTable()}
         </CardContent>
       </Card>
 
@@ -557,30 +664,43 @@ function ClientSideConsultarFacturas() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Número</TableHead>
-                    <TableHead>Fecha</TableHead>
+                    <TableHead className="w-[120px]">Número</TableHead>
+                    <TableHead className="w-[100px]">Fecha</TableHead>
                     <TableHead>Cliente</TableHead>
-                    <TableHead>ID Cliente</TableHead>
-                    <TableHead>Tipo</TableHead>
-                    <TableHead>Total</TableHead>
+                    <TableHead className="w-[120px]">Tipo</TableHead>
+                    <TableHead className="text-right w-[120px]">Total</TableHead>
+                    <TableHead className="w-[60px]"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {invoices.map((invoice) => (
                     <TableRow key={invoice.id} className="hover:bg-gray-50">
-                      <TableCell className="font-medium">{invoice.number}</TableCell>
-                      <TableCell>
-                        {format(new Date(invoice.date), 'dd/MM/yyyy', { locale: es })}
+                      <TableCell className="font-medium">
+                        <div className="flex flex-col">
+                          <span>{invoice.number}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {invoice.document_type?.code || ''}
+                          </span>
+                        </div>
                       </TableCell>
-                      <TableCell className="font-medium">{invoice.customer?.name || 'N/A'}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {invoice.customer?.id || 'N/A'}
+                      <TableCell>
+                        {format(new Date(invoice.date), 'dd/MM/yy', { locale: es })}
                       </TableCell>
                       <TableCell>
-                        {invoiceTypes.find(t => t.id === invoice.type)?.name || invoice.type}
+                        <div className="font-medium">{invoice.customer?.name || 'N/A'}</div>
+                        {invoice.customer?.identification && (
+                          <div className="text-xs text-muted-foreground">
+                            {invoice.customer.identification}
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <span className="text-sm">
+                          {documentTypes.find(t => t.id === invoice.document_type?.id)?.name || invoice.document_type?.name || invoice.type || 'N/A'}
+                        </span>
                       </TableCell>
                       <TableCell className="text-right font-medium">
-                        {formatCurrency(invoice.total)}
+                        {formatCurrency(invoice.total, invoice.currency?.code || 'COP')}
                       </TableCell>
                       <TableCell className="text-right">
                         <Button 
@@ -588,6 +708,7 @@ function ClientSideConsultarFacturas() {
                           size="icon" 
                           onClick={() => handleViewInvoice(invoice)}
                           title="Ver detalles"
+                          className="hover:bg-gray-100"
                         >
                           <Eye className="h-4 w-4" />
                         </Button>
@@ -766,14 +887,6 @@ function ClientSideConsultarFacturas() {
 
               <DialogFooter className="border-t pt-4">
                 <Button variant="outline" onClick={closeViewer}>Cerrar</Button>
-                <Button 
-                  variant="outline" 
-                  onClick={() => window.print()}
-                  className="flex items-center gap-2"
-                >
-                  <Printer className="h-4 w-4" />
-                  Imprimir
-                </Button>
                 <Button>Descargar PDF</Button>
               </DialogFooter>
             </>

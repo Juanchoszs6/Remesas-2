@@ -148,7 +148,7 @@ const log: Logger = {
   error: (...args: unknown[]) => console.error('[siigo-diagnostic]', ...args)
 };
 
-async function getSiigoToken(): Promise<string> {
+export async function getSiigoToken(): Promise<string> {
   const now = Date.now();
   if (cachedToken && now < cachedTokenExpiry) return cachedToken;
   if (tokenPromise) return tokenPromise;
@@ -157,20 +157,31 @@ async function getSiigoToken(): Promise<string> {
     try {
       log.info('Obteniendo nuevo token de Siigo...');
       
-      const body: AuthRequestBody = {
-        username: process.env.SIIGO_USERNAME,
-        access_key: process.env.SIIGO_ACCESS_KEY
-      };
+      const authUrl = 'https://api.siigo.com/auth';
       
-      if (process.env.SIIGO_PARTNER_ID) {
-        body.partner_id = process.env.SIIGO_PARTNER_ID;
-      }
+      // Create basic auth header
+      const authHeader = 'Basic ' + Buffer.from(
+        `${process.env.SIIGO_USERNAME}:${process.env.SIIGO_ACCESS_KEY}`
+      ).toString('base64');
 
-      const response = await fetch(SIIGO_AUTH, {
+      // Add debug logging
+      log.info('Sending request to:', authUrl);
+
+      const response = await fetch(authUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
+        headers: { 
+          'Authorization': authHeader,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          username: process.env.SIIGO_USERNAME,
+          access_key: process.env.SIIGO_ACCESS_KEY,
+          ...(process.env.SIIGO_PARTNER_ID && { partner_id: process.env.SIIGO_PARTNER_ID })
+        })
       });
+
+      log.info('Response status:', response.status, response.statusText);
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => '');
@@ -661,109 +672,26 @@ async function fetchAllPurchasesWithDiagnostics(
   }
 }
 
-export async function GET(request: Request) {
-  const startTime = Date.now();
-
+export async function GET() {
   try {
-    const url = new URL(request.url);
+    // Get the token using the existing getSiigoToken function
+    const token = await getSiigoToken();
     
-    const year = parseInt(url.searchParams.get('year') || '2025');
-    const pageSize = parseInt(url.searchParams.get('page_size') || url.searchParams.get('per_page') || PAGE_SIZE_DEFAULT.toString());
-    const forceRefresh = url.searchParams.get('refresh') === 'true';
-    const debug = url.searchParams.get('debug') === 'true';
-    const diagnose = url.searchParams.get('diagnose') === 'true';
-    
-    // Filtros adicionales para pruebas
-    const additionalFilters: PurchaseFilters = {};
-    const status = url.searchParams.get('status');
-    const type = url.searchParams.get('type');
-    if (status) additionalFilters.status = status;
-    if (type) additionalFilters.type = type;
-
-    if (year < 2020 || year > 2030) {
-      return NextResponse.json(
-        { error: `Año inválido: ${year}. Debe estar entre 2020 y 2030` },
-        { status: 400 }
-      );
-    }
-
-    log.info(`Solicitud recibida: año=${year}, pageSize=${pageSize}, diagnose=${diagnose}`);
-
-    const cacheKey = getCacheKey(year, pageSize, additionalFilters);
-    const cached = purchasesCache.get(cacheKey);
-
-    if (!forceRefresh && !diagnose && cached && (Date.now() - cached.ts) < CACHE_DURATION_MS) {
-      log.info(`CACHE HIT - Devolviendo ${cached.data.length} compras del cache`);
-      
-      const response: ApiResponse = {
-        success: true,
-        purchases: cached.data,
-        count: cached.data.length,
-        year,
-        pagesFetched: cached.pagesFetched,
-        totalFromAPI: cached.totalFromAPI,
-        cached: true,
-        processingTimeMs: Date.now() - startTime
-      };
-
-      if (debug && cached.diagnostics) {
-        response.diagnostics = cached.diagnostics;
-      }
-
-      return NextResponse.json(response);
-    }
-
-    log.info(`Obteniendo datos ${diagnose ? 'con diagnóstico' : 'frescos'} de Siigo`);
-    
-    const result = await fetchAllPurchasesWithDiagnostics(year, pageSize, additionalFilters);
-
-    const cacheEntry: CacheEntry = {
-      ts: Date.now(),
-      data: result.purchases,
-      pagesFetched: result.pagesFetched,
-      totalFromAPI: result.totalFromAPI,
-      diagnostics: result.diagnostics
-    };
-    purchasesCache.set(cacheKey, cacheEntry);
-
-    const response: ApiResponse = {
+    // Return the token in the expected format
+    return NextResponse.json({ 
       success: true,
-      purchases: result.purchases,
-      count: result.purchases.length,
-      year,
-      pagesFetched: result.pagesFetched,
-      totalFromAPI: result.totalFromAPI,
-      cached: false,
-      processingTimeMs: Date.now() - startTime
-    };
-
-    if (debug || diagnose) {
-      response.diagnostics = result.diagnostics;
-      
-      if (diagnose && result.diagnostics) {
-        const diagnostics = result.diagnostics as Record<string, unknown>;
-        if (diagnostics.analysis) {
-          const analysis = diagnostics.analysis as Record<string, unknown>;
-          response.monthlyBreakdown = analysis.monthlyBreakdown as Record<string, number>;
-          response.statusBreakdown = analysis.statusBreakdown as Record<string, number>;
-          response.analysis = analysis;
-        }
-        response.recommendations = (diagnostics.recommendations || []) as string[];
-      }
-    }
-
-    log.info(`Respuesta enviada: ${result.purchases.length}/${result.totalFromAPI} compras`);
-
-    return NextResponse.json(response);
-
+      token: token,
+      expires_in: 3600 // 1 hour in seconds
+    });
   } catch (err) {
     const error = err as Error;
-    log.error('Error en GET handler:', error.message);
+    console.error('Error getting Siigo token:', error);
+    
     return NextResponse.json(
       { 
         success: false,
-        error: error.message,
-        processingTimeMs: Date.now() - startTime
+        error: 'Failed to get Siigo token',
+        message: error.message || 'Unknown error occurred'
       },
       { status: 500 }
     );
